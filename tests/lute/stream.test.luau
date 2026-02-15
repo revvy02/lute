@@ -22,6 +22,7 @@ test.suite("Stream", function(suite)
 			table.insert(chunks, buffer.tostring(chunk))
 		end
 		assert.eq(table.concat(chunks), "hello world")
+		stream.close(p.stderr)
 	end)
 
 	suite:case("read_returns_nil_on_eof", function(assert)
@@ -37,6 +38,8 @@ test.suite("Stream", function(suite)
 			end
 		end
 		assert.eq(gotEof, true)
+		stream.close(p.stdin)
+		stream.close(p.stderr)
 	end)
 
 	suite:case("write_accepts_string_and_buffer", function(assert)
@@ -56,6 +59,7 @@ test.suite("Stream", function(suite)
 			table.insert(result, buffer.tostring(chunk))
 		end
 		assert.eq(table.concat(result), "string buffer")
+		stream.close(p.stderr)
 	end)
 
 	suite:case("close_is_idempotent", function()
@@ -64,6 +68,8 @@ test.suite("Stream", function(suite)
 
 		stream.close(p.stdin)
 		stream.close(p.stdin) -- should not error
+		stream.close(p.stdout)
+		stream.close(p.stderr)
 	end)
 
 	suite:case("read_errors_on_write_only_stream", function(assert)
@@ -74,6 +80,8 @@ test.suite("Stream", function(suite)
 			stream.read(p.stdin) -- stdin is write-only
 		end)
 		stream.close(p.stdin)
+		stream.close(p.stdout)
+		stream.close(p.stderr)
 	end)
 
 	suite:case("write_errors_on_read_only_stream", function(assert)
@@ -83,6 +91,9 @@ test.suite("Stream", function(suite)
 		assert.errors(function()
 			stream.write(p.stdout, "nope") -- stdout is read-only
 		end)
+		stream.close(p.stdin)
+		stream.close(p.stdout)
+		stream.close(p.stderr)
 	end)
 
 	-- Parent stdio
@@ -108,6 +119,9 @@ test.suite("Stream", function(suite)
 		assert.neq(p.stdin, nil)
 		assert.neq(p.stdout, nil)
 		assert.neq(p.stderr, nil)
+		stream.close(p.stdin)
+		stream.close(p.stdout)
+		stream.close(p.stderr)
 	end)
 
 	suite:case("process_handle_fields_nil_when_not_piped", function(assert)

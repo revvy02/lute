@@ -267,6 +267,10 @@ static StdioHandles* initStdioHandles(uv_loop_t* loop)
             uv_pipe_init(loop, &stdio->handles[i].pipe, 0);
             uv_pipe_open(&stdio->handles[i].pipe, fds[i]);
         }
+
+        // Unref so parent stdio handles don't keep the event loop alive.
+        // Without this, piped stdio (e.g. on CI) prevents clean shutdown.
+        uv_unref((uv_handle_t*)&stdio->handles[i]);
     }
 
     return stdio;
