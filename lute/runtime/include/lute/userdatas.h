@@ -6,3 +6,4 @@ constexpr int kInstantTag = 126;
 constexpr int kWatchHandleTag = 125;
 constexpr int kHashFunctionTag = 124;
 constexpr int kSpanTag = 123;
+constexpr int kProcessHandleTag = 122;

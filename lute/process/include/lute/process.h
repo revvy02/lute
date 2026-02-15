@@ -25,6 +25,11 @@ int exitFunc(lua_State* L);
 std::optional<std::string> getExecPath(std::string* error);
 int execpath(lua_State* L);
 
+int create(lua_State* L);
+int killProcess(lua_State* L);
+int attachProcess(lua_State* L);
+int detach(lua_State* L);
+
 static const luaL_Reg lib[] = {
     {"run", run},
     {"system", system},
@@ -32,6 +37,10 @@ static const luaL_Reg lib[] = {
     {"cwd", cwd},
     {"exit", exitFunc},
     {"execpath", execpath},
+    {"create", create},
+    {"kill", killProcess},
+    {"attach", attachProcess},
+    {"detach", detach},
 
     {nullptr, nullptr}
 };

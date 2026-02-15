@@ -55,11 +55,17 @@ static void yieldLuaStateFor(lua_State* L, uint64_t milliseconds, bool putDeltaT
     yield->putDeltaTimeOnStack = putDeltaTimeOnStack;
     yield->nargs = nargs;
 
+    Runtime* runtime = getRuntime(L);
+
     uv_timer_start(
         &yield->uvTimer,
         [](uv_timer_t* timer)
         {
             WaitData* yield = static_cast<WaitData*>(timer->data);
+
+            // Unregister cancel callback on normal completion
+            if (yield->resumptionToken && yield->resumptionToken->yieldedThread)
+                yield->resumptionToken->runtime->unregisterCancelCallback(yield->resumptionToken->yieldedThread);
 
             yield->resumptionToken->complete(
                 [yield](lua_State* L)
@@ -84,6 +90,24 @@ static void yieldLuaStateFor(lua_State* L, uint64_t milliseconds, bool putDeltaT
         milliseconds,
         0
     );
+
+    // Register cancel callback so task.cancel can stop this timer
+    runtime->registerCancelCallback(L, [yield, runtime]() {
+        uv_timer_stop(&yield->uvTimer);
+        uv_close(
+            reinterpret_cast<uv_handle_t*>(&yield->uvTimer),
+            [](uv_handle_t* handle)
+            {
+                WaitData* yield = static_cast<WaitData*>(handle->data);
+                delete yield;
+            }
+        );
+        if (yield->resumptionToken && !yield->resumptionToken->completed)
+        {
+            yield->resumptionToken->completed = true;
+            runtime->releasePendingToken();
+        }
+    });
 }
 
 namespace task
@@ -238,6 +262,16 @@ int lute_resume(lua_State* L)
         runtime->reportError(thread);
     }
 
+    return 0;
+}
+
+int lua_cancel(lua_State* L)
+{
+    lua_State* thread = lua_tothread(L, 1);
+    luaL_argexpected(L, thread != nullptr, 1, "thread");
+
+    Runtime* runtime = getRuntime(L);
+    runtime->cancelThread(thread);
     return 0;
 }
 

@@ -8,6 +8,7 @@
 #include "uv.h"
 
 #include <assert.h>
+#include <csignal>
 #include <string>
 
 static void lua_close_checked(lua_State* L)
@@ -308,12 +309,51 @@ void ResumeTokenData::complete(std::function<int(lua_State*)> cont)
     runtime->releasePendingToken();
 }
 
+void Runtime::registerCancelCallback(lua_State* L, std::function<void()> cancel)
+{
+    cancelCallbacks[L] = std::move(cancel);
+}
+
+void Runtime::unregisterCancelCallback(lua_State* L)
+{
+    cancelCallbacks.erase(L);
+}
+
+bool Runtime::cancelThread(lua_State* L)
+{
+    auto it = cancelCallbacks.find(L);
+    if (it == cancelCallbacks.end())
+        return false;
+    auto callback = std::move(it->second);
+    cancelCallbacks.erase(it);
+    callback();
+    return true;
+}
+
+void Runtime::registerChildProcess(uv_process_t* proc)
+{
+    childProcesses.insert(proc);
+}
+
+void Runtime::unregisterChildProcess(uv_process_t* proc)
+{
+    childProcesses.erase(proc);
+}
+
+void Runtime::killAllChildProcesses()
+{
+    for (auto* proc : childProcesses)
+        uv_process_kill(proc, SIGTERM);
+    childProcesses.clear();
+}
+
 ResumeToken getResumeToken(lua_State* L)
 {
     ResumeToken token = std::make_shared<ResumeTokenData>();
 
     token->runtime = getRuntime(L);
     token->ref = getRefForThread(L);
+    token->yieldedThread = L;
 
     token->runtime->addPendingToken();
 

@@ -14,6 +14,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct lua_State;
@@ -76,6 +78,16 @@ struct Runtime
 
     uv_loop_t* getEventLoop();
 
+    // Thread → cancel callback (for task.cancel)
+    void registerCancelCallback(lua_State* L, std::function<void()> cancel);
+    void unregisterCancelCallback(lua_State* L);
+    bool cancelThread(lua_State* L);
+
+    // All spawned child processes (for process.exit cleanup)
+    void registerChildProcess(uv_process_t* proc);
+    void unregisterChildProcess(uv_process_t* proc);
+    void killAllChildProcesses();
+
     // VM for this runtime
     std::unique_ptr<lua_State, void (*)(lua_State*)> globalState;
 
@@ -86,6 +98,9 @@ struct Runtime
     std::unique_ptr<lua_State, void (*)(lua_State*)> dataCopy;
 
     Luau::VecDeque<ThreadToContinue> runningThreads;
+
+    std::unordered_map<lua_State*, std::function<void()>> cancelCallbacks;
+    std::unordered_set<uv_process_t*> childProcesses;
 
 private:
     std::mutex continuationMutex;
@@ -115,6 +130,7 @@ struct ResumeTokenData
 
     Runtime* runtime = nullptr;
     std::shared_ptr<Ref> ref;
+    lua_State* yieldedThread = nullptr;
     bool completed = false;
 };
 

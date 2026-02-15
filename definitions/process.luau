@@ -25,6 +25,8 @@ export type ProcessResult = {
 	signal: string?,
 }
 
+export type ProcessHandle = typeof(newproxy())
+
 local process = {}
 
 process.env = {} :: { [string]: string }
@@ -37,7 +39,7 @@ function process.cwd(): string
 	error("not implemented")
 end
 
-function process.run(args: { string }, options: ProcessRunOptions?): ProcessResult
+function process.run(args: { string } | ProcessHandle, options: ProcessRunOptions?): ProcessResult
 	error("not implemented")
 end
 
@@ -50,6 +52,22 @@ function process.exit(exitcode: number): never
 end
 
 function process.execpath(): string
+	error("not implemented")
+end
+
+function process.create(args: { string }, options: ProcessRunOptions?): ProcessHandle
+	error("not implemented")
+end
+
+function process.kill(handle: ProcessHandle)
+	error("not implemented")
+end
+
+function process.attach(handle: ProcessHandle)
+	error("not implemented")
+end
+
+function process.detach(handle: ProcessHandle)
 	error("not implemented")
 end
 

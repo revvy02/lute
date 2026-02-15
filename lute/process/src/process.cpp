@@ -2,6 +2,7 @@
 
 #include "lute/common.h"
 #include "lute/runtime.h"
+#include "lute/userdatas.h"
 #include "lute/uvutils.h"
 
 #include "Luau/Common.h"
@@ -12,6 +13,7 @@
 #include "uv.h"
 
 #include <climits> // IWYU pragma: keep
+#include <csignal>
 #include <functional>
 #include <map>
 #include <memory>
@@ -161,6 +163,15 @@ struct ProcessOptions
     std::string customShell; // only used by system()
 };
 
+struct LuaProcessHandle
+{
+    std::shared_ptr<ProcessHandle> handle; // set when spawned
+    std::vector<std::string> args;
+    ProcessOptions opts;
+    bool detached = false;
+    bool spawned = false;
+};
+
 static void onProcessExit(uv_process_t* process, int64_t exitStatus, int termSignal)
 {
     ProcessHandle* handle = static_cast<ProcessHandle*>(process->data);
@@ -169,6 +180,14 @@ static void onProcessExit(uv_process_t* process, int64_t exitStatus, int termSig
 
     handle->exitCode = exitStatus;
     handle->termSignal = termSignal;
+
+    // Unregister from runtime tracking
+    if (handle->resumeToken && handle->resumeToken->runtime)
+    {
+        handle->resumeToken->runtime->unregisterChildProcess(process);
+        if (handle->resumeToken->yieldedThread)
+            handle->resumeToken->runtime->unregisterCancelCallback(handle->resumeToken->yieldedThread);
+    }
 
     handle->triggerCompletion(true);
 }
@@ -223,7 +242,7 @@ const std::string kStdioKindNone = "none";
 // const std::string kStdioKindForward = "forward";
 
 // helper function for run() and system()
-int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions opts)
+int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions opts, LuaProcessHandle* luaHandle = nullptr)
 {
     auto handle = std::make_shared<ProcessHandle>();
     handle->loop = getRuntimeLoop(L);
@@ -337,6 +356,28 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
     uv_read_start((uv_stream_t*)&handle->stdoutPipe, allocBuffer, onPipeRead);
     uv_read_start((uv_stream_t*)&handle->stderrPipe, allocBuffer, onPipeRead);
 
+    // Register child process for exit-level cleanup
+    Runtime* runtime = getRuntime(L);
+    runtime->registerChildProcess(&handle->process);
+
+    // Store internal handle if we have a LuaProcessHandle
+    if (luaHandle)
+        luaHandle->handle = handle;
+
+    // Register cancel callback for thread-level cleanup
+    if (!luaHandle || !luaHandle->detached)
+    {
+        runtime->registerCancelCallback(L, [handle, runtime]() {
+            if (!handle->completed)
+                uv_process_kill(&handle->process, SIGTERM);
+            if (handle->resumeToken && !handle->resumeToken->completed)
+            {
+                handle->resumeToken->completed = true;
+                runtime->releasePendingToken();
+            }
+        });
+    }
+
     return lua_yield(L, 0);
 }
 
@@ -399,9 +440,21 @@ ProcessOptions parseOptions(lua_State* L, int index)
 
 int run(lua_State* L)
 {
+    // Handle overload: process.run(processHandle)
+    if (lua_isuserdata(L, 1))
+    {
+        LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(lua_touserdatatagged(L, 1, kProcessHandleTag));
+        if (!ph)
+            luaL_typeerrorL(L, 1, "ProcessHandle");
+        if (ph->spawned)
+            luaL_error(L, "process already running");
+        ph->spawned = true;
+        return executionHelper(L, ph->args, ph->opts, ph);
+    }
+
     if (!lua_istable(L, 1))
     {
-        luaL_error(L, "process.run expects a table of arguments as the first parameter");
+        luaL_error(L, "process.run expects a table of arguments or a ProcessHandle as the first parameter");
     }
 
     std::vector<std::string> args;
@@ -473,11 +526,81 @@ int homedir(lua_State* L)
     return 1;
 }
 
+int create(lua_State* L)
+{
+    if (!lua_istable(L, 1))
+        luaL_error(L, "process.create expects a table of arguments as the first parameter");
+
+    std::vector<std::string> args;
+    int len = lua_objlen(L, 1);
+    for (int i = 1; i <= len; i++)
+    {
+        lua_rawgeti(L, 1, i);
+        args.push_back(luaL_checkstring(L, -1));
+        lua_pop(L, 1);
+    }
+
+    if (args.empty())
+        luaL_error(L, "process.create requires a non-empty table");
+
+    ProcessOptions opts = parseOptions(L, 2);
+
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(
+        lua_newuserdatataggedwithmetatable(L, sizeof(LuaProcessHandle), kProcessHandleTag));
+    new (ph) LuaProcessHandle{};
+    ph->args = std::move(args);
+    ph->opts = std::move(opts);
+    return 1;
+}
+
+int killProcess(lua_State* L)
+{
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(lua_touserdatatagged(L, 1, kProcessHandleTag));
+    if (!ph)
+        luaL_typeerrorL(L, 1, "ProcessHandle");
+    if (ph->handle && !ph->handle->completed)
+        uv_process_kill(&ph->handle->process, SIGTERM);
+    return 0;
+}
+
+int detach(lua_State* L)
+{
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(lua_touserdatatagged(L, 1, kProcessHandleTag));
+    if (!ph)
+        luaL_typeerrorL(L, 1, "ProcessHandle");
+    ph->detached = true;
+    if (ph->handle)
+    {
+        Runtime* runtime = getRuntime(L);
+        runtime->unregisterChildProcess(&ph->handle->process);
+        if (ph->handle->resumeToken && ph->handle->resumeToken->yieldedThread)
+            runtime->unregisterCancelCallback(ph->handle->resumeToken->yieldedThread);
+    }
+    return 0;
+}
+
+int attachProcess(lua_State* L)
+{
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(lua_touserdatatagged(L, 1, kProcessHandleTag));
+    if (!ph)
+        luaL_typeerrorL(L, 1, "ProcessHandle");
+    ph->detached = false;
+    if (ph->handle && !ph->handle->completed)
+    {
+        Runtime* runtime = getRuntime(L);
+        runtime->registerChildProcess(&ph->handle->process);
+    }
+    return 0;
+}
+
 int exitFunc(lua_State* L)
 {
     int exitCode = luaL_optinteger(L, 1, 0);
 
-    // Exit with the provided code
+    // Kill all attached child processes before exiting
+    Runtime* runtime = getRuntime(L);
+    runtime->killAllChildProcesses();
+
     std::exit(exitCode);
 
     LUTE_UNREACHABLE();
@@ -661,6 +784,22 @@ int luaopen_process(lua_State* L)
 
 int luteopen_process(lua_State* L)
 {
+    // Set up ProcessHandle metatable and destructor
+    luaL_newmetatable(L, "ProcessHandle");
+    lua_pushstring(L, "ProcessHandle");
+    lua_setfield(L, -2, "__type");
+
+    lua_setuserdatadtor(
+        L,
+        kProcessHandleTag,
+        [](lua_State* L, void* ud)
+        {
+            std::destroy_at(static_cast<process::LuaProcessHandle*>(ud));
+        }
+    );
+
+    lua_setuserdatametatable(L, kProcessHandleTag);
+
     lua_createtable(L, 0, std::size(process::lib));
 
     for (auto& [name, func] : process::lib)
