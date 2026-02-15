@@ -4,7 +4,6 @@ local task = require("@lute/task")
 local test = require("@std/test")
 
 test.suite("Stream", function(suite)
-
 	-- Core stream operations (using process pipes)
 
 	suite:case("write_and_read_through_cat", function(assert)
@@ -17,7 +16,9 @@ test.suite("Stream", function(suite)
 		local chunks = {}
 		while true do
 			local chunk = stream.read(p.stdout)
-			if not chunk then break end
+			if not chunk then
+				break
+			end
 			table.insert(chunks, buffer.tostring(chunk))
 		end
 		assert.eq(table.concat(chunks), "hello world")
@@ -49,7 +50,9 @@ test.suite("Stream", function(suite)
 		local result = {}
 		while true do
 			local chunk = stream.read(p.stdout)
-			if not chunk then break end
+			if not chunk then
+				break
+			end
 			table.insert(result, buffer.tostring(chunk))
 		end
 		assert.eq(table.concat(result), "string buffer")
@@ -113,5 +116,4 @@ test.suite("Stream", function(suite)
 		assert.eq(p.stdout, nil)
 		assert.eq(p.stderr, nil)
 	end)
-
 end)
