@@ -15,6 +15,7 @@
 
 #include <climits> // IWYU pragma: keep
 #include <csignal>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
