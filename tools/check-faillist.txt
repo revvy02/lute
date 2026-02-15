@@ -222,8 +222,8 @@ tests/batteries/collections/deque.test.luau:86:13-16
 tests/batteries/collections/deque.test.luau:91:13-16
 tests/lute/stream.test.luau:22:4-15
 tests/lute/stream.test.luau:24:13-24
-tests/lute/stream.test.luau:56:4-15
-tests/lute/stream.test.luau:58:13-24
+tests/lute/stream.test.luau:59:4-15
+tests/lute/stream.test.luau:61:13-24
 tests/runtime/crypto.test.luau:66:26-30
 tests/runtime/crypto.test.luau:108:56-68
 tests/runtime/crypto.test.luau:112:72-84
