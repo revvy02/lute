@@ -110,12 +110,14 @@ struct FdReadState : FdRequest
     {
         chunk.resize(kFdChunkSize);
         iov = uv_buf_init(chunk.data(), chunk.size());
+        accumulated.reserve(kFdChunkSize);
     }
 
     static void callback(uv_fs_t* req);
 
     LuaStream* stream = nullptr;
     std::vector<char> chunk;
+    std::vector<char> accumulated;
     uv_buf_t iov;
 };
 
@@ -133,24 +135,37 @@ void FdReadState::callback(uv_fs_t* req)
     if (bytesRead == 0)
     {
         r->stream->eof = true;
-        r->succeed(
-            [](lua_State* L)
-            {
-                lua_pushnil(L);
-                return 1;
-            }
-        );
+
+        if (r->accumulated.empty())
+        {
+            r->succeed(
+                [](lua_State* L)
+                {
+                    lua_pushnil(L);
+                    return 1;
+                }
+            );
+        }
+        else
+        {
+            r->succeed(
+                [data = std::move(r->accumulated)](lua_State* L)
+                {
+                    void* bufData = lua_newbuffer(L, data.size());
+                    memcpy(bufData, data.data(), data.size());
+                    return 1;
+                }
+            );
+        }
         return;
     }
 
-    r->succeed(
-        [data = std::string(r->chunk.data(), bytesRead)](lua_State* L)
-        {
-            void* bufData = lua_newbuffer(L, data.size());
-            memcpy(bufData, data.data(), data.size());
-            return 1;
-        }
-    );
+    // Append chunk to accumulator and read more
+    r->accumulated.insert(r->accumulated.end(), r->chunk.begin(), r->chunk.begin() + bytesRead);
+    std::fill(r->chunk.begin(), r->chunk.end(), 0);
+
+    uvutils::ScopedUVRequest<FdReadState> scopedReq{std::move(r)};
+    uv_fs_read(scopedReq->getLoop(), &scopedReq->req, scopedReq->stream->fd, &scopedReq->iov, 1, -1, FdReadState::callback);
 }
 
 struct FdWriteState : FdRequest

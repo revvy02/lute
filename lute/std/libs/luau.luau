@@ -25,18 +25,10 @@ function luau.loadbypath(requirePath: path.pathlike, env: { [any]: any }?): any
 	local requirePathStr = if typeof(requirePath) == "string" then requirePath else path.format(requirePath)
 
 	local handle = fs.open(requirePathStr, "r")
-
-	local chunks = {}
-	while true do
-		local chunk = stream.read(handle)
-		if not chunk then
-			break
-		end
-		table.insert(chunks, buffer.tostring(chunk))
-	end
+	local buf = stream.read(handle)
 	stream.close(handle)
 
-	local source = table.concat(chunks)
+	local source = if buf then buffer.tostring(buf) else ""
 	local bytecode = luau.compile(source)
 
 	return luau.load(bytecode, requirePathStr, env)()

@@ -44,15 +44,8 @@ function fslib.open(path: pathlike, mode: handlemode?): file
 end
 
 function fslib.read(file: file): string
-	local chunks = {}
-	while true do
-		local chunk = stream.read(file)
-		if not chunk then
-			break
-		end
-		table.insert(chunks, buffer.tostring(chunk))
-	end
-	return table.concat(chunks)
+	local buf = stream.read(file)
+	return if buf then buffer.tostring(buf) else ""
 end
 
 function fslib.write(file: file, contents: string): ()

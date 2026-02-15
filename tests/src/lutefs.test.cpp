@@ -24,32 +24,16 @@ TEST_CASE_FIXTURE(CliRuntimeFixture, "fs_open_write_read_close")
         local path = ")" +
         testFile + R"("
 
-        -- Open file for writing
         local h = fs.open(path, "w+")
-
-        -- Write some data
         stream.write(h, "Hello, World!")
-
-        -- Close the file
         stream.close(h)
 
-        -- Open file for reading
         local hr = fs.open(path, "r")
         assert(hr ~= nil, "File handle for reading should not be nil")
 
-        -- Read the data (chunked — loop until nil)
-        local chunks = {}
-        while true do
-            local chunk = stream.read(hr)
-            if not chunk then
-                break
-            end
-            table.insert(chunks, buffer.tostring(chunk))
-        end
-        local content = table.concat(chunks)
+        local buf = stream.read(hr)
+        local content = if buf then buffer.tostring(buf) else ""
         local correctness = content == "Hello, World!"
-
-        -- Close the read handle
         stream.close(hr)
 
         report(content)
