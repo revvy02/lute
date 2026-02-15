@@ -6,12 +6,13 @@
 local deque = require("@batteries/collections/deque")
 local fs = require("@lute/fs")
 local pathlib = require("@std/path")
+local stream = require("@lute/stream")
 local sys = require("@std/system")
 
 local fslib = {}
 
 export type handlemode = fs.HandleMode
-export type file = fs.FileHandle
+export type file = stream.Stream
 export type type = fs.FileType
 export type metadata = fs.FileMetadata
 export type directoryentry = fs.DirectoryEntry
@@ -43,15 +44,23 @@ function fslib.open(path: pathlike, mode: handlemode?): file
 end
 
 function fslib.read(file: file): string
-	return fs.read(file)
+	local chunks = {}
+	while true do
+		local chunk = stream.read(file)
+		if not chunk then
+			break
+		end
+		table.insert(chunks, buffer.tostring(chunk))
+	end
+	return table.concat(chunks)
 end
 
 function fslib.write(file: file, contents: string): ()
-	return fs.write(file, contents)
+	stream.write(file, contents)
 end
 
 function fslib.close(file: file): ()
-	return fs.close(file)
+	stream.close(file)
 end
 
 function fslib.remove(path: pathlike): ()
@@ -114,15 +123,15 @@ end
 
 function fslib.readfiletostring(filepath: pathlike): string
 	local f = fs.open(pathlib.format(filepath), "r")
-	local contents = fs.read(f)
-	fs.close(f)
+	local contents = fslib.read(f)
+	fslib.close(f)
 	return contents
 end
 
 function fslib.writestringtofile(filepath: pathlike, contents: string): ()
 	local f = fs.open(pathlib.format(filepath), "w+")
-	fs.write(f, contents)
-	fs.close(f)
+	fslib.write(f, contents)
+	fslib.close(f)
 end
 
 function fslib.createdirectory(path: pathlike, options: createdirectoryoptions?): ()

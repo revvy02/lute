@@ -20,6 +20,7 @@ TEST_CASE_FIXTURE(CliRuntimeFixture, "fs_open_write_read_close")
     runCode(
         R"(
         local fs = require("@lute/fs")
+        local stream = require("@lute/stream")
         local path = ")" +
         testFile + R"("
 
@@ -27,21 +28,29 @@ TEST_CASE_FIXTURE(CliRuntimeFixture, "fs_open_write_read_close")
         local h = fs.open(path, "w+")
 
         -- Write some data
-        fs.write(h, "Hello, World!")
+        stream.write(h, "Hello, World!")
 
         -- Close the file
-        fs.close(h)
+        stream.close(h)
 
         -- Open file for reading
         local hr = fs.open(path, "r")
         assert(hr ~= nil, "File handle for reading should not be nil")
 
-        -- Read the data
-        local content = fs.read(hr)
+        -- Read the data (chunked — loop until nil)
+        local chunks = {}
+        while true do
+            local chunk = stream.read(hr)
+            if not chunk then
+                break
+            end
+            table.insert(chunks, buffer.tostring(chunk))
+        end
+        local content = table.concat(chunks)
         local correctness = content == "Hello, World!"
 
         -- Close the read handle
-        fs.close(hr)
+        stream.close(hr)
 
         report(content)
         report(correctness)

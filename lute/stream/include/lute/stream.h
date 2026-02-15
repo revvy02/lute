@@ -8,8 +8,15 @@ typedef struct uv_stream_s uv_stream_t;
 
 int luteopen_stream(lua_State* L);
 
+// Ensures the Stream tagged-userdata metatable is registered.
+// Idempotent — safe to call multiple times.
+void ensureStreamMetatable(lua_State* L);
+
 // Called by process module to create Stream userdatas wrapping pipes.
 void pushStream(lua_State* L, uv_stream_t* handle, bool readable, bool writable);
+
+// Called by fs module to create Stream userdatas wrapping file descriptors.
+void pushStreamFromFd(lua_State* L, int fd, bool readable, bool writable);
 
 namespace stream
 {

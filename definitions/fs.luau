@@ -1,10 +1,7 @@
 -- lute-lint-global-ignore(unused_variable)
-local fs = {}
+local stream = require("@lute/stream")
 
-export type FileHandle = {
-	fd: number,
-	err: number,
-}
+local fs = {}
 
 export type FileType = "file" | "dir" | "link" | "fifo" | "socket" | "char" | "block" | "unknown"
 export type HandleMode = "r" | "w" | "x" | "a" | "r+" | "w+" | "x+" | "a+"
@@ -32,19 +29,7 @@ export type WatchEvent = {
 	rename: boolean,
 }
 
-function fs.open(path: string, mode: HandleMode?): FileHandle
-	error("not implemented")
-end
-
-function fs.read(handle: FileHandle): string
-	error("not implemented")
-end
-
-function fs.write(handle: FileHandle, contents: string): ()
-	error("not implemented")
-end
-
-function fs.close(handle: FileHandle): ()
+function fs.open(path: string, mode: HandleMode?): stream.Stream
 	error("not implemented")
 end
 

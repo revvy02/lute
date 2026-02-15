@@ -9,7 +9,6 @@
 #include "uv.h"
 
 #include <cstring>
-#include <memory>
 #include <optional>
 #include <string>
 
@@ -17,22 +16,6 @@
 
 namespace fs
 {
-
-static UVFile* getFileHandle(lua_State* L, int index)
-{
-    if (!lua_islightuserdata(L, index))
-    {
-        luaL_errorL(L, "Error: expected file handle");
-    }
-
-    auto* handle = static_cast<UVFile*>(lua_tolightuserdata(L, index));
-    if (!handle)
-    {
-        luaL_errorL(L, "Error: invalid file handle");
-    }
-
-    return handle;
-}
 
 std::optional<int> setFlags(const char* c, int* openFlags)
 {
@@ -74,28 +57,6 @@ std::optional<int> setFlags(const char* c, int* openFlags)
     }
 
     return modeFlags;
-}
-
-int close(lua_State* L)
-{
-    auto* handle = getFileHandle(L, 1);
-    return close_impl(L, handle);
-}
-
-int read(lua_State* L)
-{
-    auto* handle = getFileHandle(L, 1);
-    return read_impl(L, handle);
-}
-
-int write(lua_State* L)
-{
-    auto* handle = getFileHandle(L, 1);
-
-    size_t len;
-    const char* data = luaL_checklstring(L, 2, &len);
-
-    return write_impl(L, handle, data, len);
 }
 
 int open(lua_State* L)

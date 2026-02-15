@@ -1,6 +1,7 @@
 #include "lute/stream.h"
 
 #include "lute/runtime.h"
+#include "lute/UVRequest.h"
 #include "lute/userdatas.h"
 
 #include "lua.h"
@@ -12,17 +13,25 @@
 #include <cstring>
 #include <string>
 
+constexpr size_t kFdChunkSize = 4096;
+
 namespace stream
 {
 
 struct LuaStream
 {
-    uv_stream_t* handle = nullptr;
+    uv_stream_t* handle = nullptr; // for pipes, TTYs, sockets
+    int fd = -1;                    // for files (from uv_fs_open)
     bool readable = false;
     bool writable = false;
     bool closed = false;
     bool eof = false;
     bool ownsHandle = false;
+
+    bool isFd() const
+    {
+        return fd >= 0;
+    }
 };
 
 static LuaStream* checkStream(lua_State* L, int idx)
@@ -89,6 +98,112 @@ static void readCallback(uv_stream_t* uvStream, ssize_t nread, const uv_buf_t* b
     delete state;
 }
 
+// --- fd-based I/O support (for file-backed streams) ---
+
+using FdRequest = uvutils::UVRequest<uv_fs_t>;
+
+struct FdReadState : FdRequest
+{
+    FdReadState(lua_State* L, LuaStream* stream)
+        : FdRequest(L)
+        , stream(stream)
+    {
+        chunk.resize(kFdChunkSize);
+        iov = uv_buf_init(chunk.data(), chunk.size());
+    }
+
+    static void callback(uv_fs_t* req);
+
+    LuaStream* stream = nullptr;
+    std::vector<char> chunk;
+    uv_buf_t iov;
+};
+
+void FdReadState::callback(uv_fs_t* req)
+{
+    auto r = uvutils::retake<FdReadState>(req);
+    auto bytesRead = req->result;
+
+    if (bytesRead < 0)
+    {
+        r->fail("Error reading file: %s", uv_strerror(bytesRead));
+        return;
+    }
+
+    if (bytesRead == 0)
+    {
+        r->stream->eof = true;
+        r->succeed(
+            [](lua_State* L)
+            {
+                lua_pushnil(L);
+                return 1;
+            }
+        );
+        return;
+    }
+
+    r->succeed(
+        [data = std::string(r->chunk.data(), bytesRead)](lua_State* L)
+        {
+            void* bufData = lua_newbuffer(L, data.size());
+            memcpy(bufData, data.data(), data.size());
+            return 1;
+        }
+    );
+}
+
+struct FdWriteState : FdRequest
+{
+    FdWriteState(lua_State* L, LuaStream* stream, const char* buf, size_t len)
+        : FdRequest(L)
+        , stream(stream)
+        , toWrite(buf, buf + len)
+        , offset(0)
+    {
+        chunk.resize(kFdChunkSize);
+    }
+
+    static void callback(uv_fs_t* req);
+
+    LuaStream* stream = nullptr;
+    std::vector<char> chunk;
+    uv_buf_t iov;
+    std::vector<char> toWrite;
+    size_t offset = 0;
+};
+
+void FdWriteState::callback(uv_fs_t* req)
+{
+    auto w = uvutils::retake<FdWriteState>(req);
+    auto bytesWritten = req->result;
+    if (bytesWritten < 0)
+    {
+        w->fail("Error writing file: %s", uv_strerror(bytesWritten));
+        return;
+    }
+
+    w->offset += bytesWritten;
+    if (w->offset == w->toWrite.size())
+    {
+        w->succeed(
+            [](lua_State* L)
+            {
+                return 0;
+            }
+        );
+        return;
+    }
+
+    size_t remaining = w->toWrite.size() - w->offset;
+    size_t chunkSize = std::min(remaining, w->chunk.size());
+    std::copy(w->toWrite.begin() + w->offset, w->toWrite.begin() + w->offset + chunkSize, w->chunk.begin());
+    w->iov = uv_buf_init(w->chunk.data(), chunkSize);
+
+    uvutils::ScopedUVRequest<FdWriteState> scopedReq{std::move(w)};
+    uv_fs_write(scopedReq->getLoop(), &scopedReq->req, scopedReq->stream->fd, &scopedReq->iov, 1, -1, FdWriteState::callback);
+}
+
 int read(lua_State* L)
 {
     LuaStream* s = checkStream(L, 1);
@@ -101,6 +216,13 @@ int read(lua_State* L)
     {
         lua_pushnil(L);
         return 1;
+    }
+
+    if (s->isFd())
+    {
+        uvutils::ScopedUVRequest<FdReadState> req{L, s};
+        uv_fs_read(req->getLoop(), &req->req, s->fd, &req->iov, 1, -1, FdReadState::callback);
+        return lua_yield(L, 0);
     }
 
     auto token = getResumeToken(L);
@@ -173,6 +295,18 @@ int write(lua_State* L)
         data = luaL_checklstring(L, 2, &len);
     }
 
+    if (s->isFd())
+    {
+        uvutils::ScopedUVRequest<FdWriteState> req{L, s, data, len};
+
+        size_t chunkSize = std::min(len, req->chunk.size());
+        std::copy(req->toWrite.begin(), req->toWrite.begin() + chunkSize, req->chunk.begin());
+        req->iov = uv_buf_init(req->chunk.data(), chunkSize);
+
+        uv_fs_write(req->getLoop(), &req->req, s->fd, &req->iov, 1, -1, FdWriteState::callback);
+        return lua_yield(L, 0);
+    }
+
     auto token = getResumeToken(L);
 
     WriteState* state = new WriteState();
@@ -202,6 +336,39 @@ int close(lua_State* L)
 
     s->closed = true;
 
+    if (s->isFd())
+    {
+        int fd = s->fd;
+        s->fd = -1;
+
+        uvutils::ScopedUVRequest<FdRequest> req(L);
+        uv_fs_close(
+            req->getLoop(),
+            &req->req,
+            fd,
+            [](uv_fs_t* req)
+            {
+                auto r = uvutils::retake<FdRequest>(req);
+                auto result = req->result;
+
+                if (result < 0)
+                {
+                    r->fail("Error closing file: %s", uv_strerror(result));
+                    return;
+                }
+
+                r->succeed(
+                    [](lua_State* L)
+                    {
+                        return 0;
+                    }
+                );
+            }
+        );
+
+        return lua_yield(L, 0);
+    }
+
     if (!uv_is_closing((uv_handle_t*)s->handle))
     {
         if (s->ownsHandle)
@@ -225,12 +392,49 @@ int close(lua_State* L)
 
 } // namespace stream
 
+void ensureStreamMetatable(lua_State* L)
+{
+    if (luaL_newmetatable(L, "Stream"))
+    {
+        // First time — set up the metatable
+        lua_pushstring(L, "Stream");
+        lua_setfield(L, -2, "__type");
+
+        lua_setuserdatadtor(
+            L,
+            kStreamTag,
+            [](lua_State*, void* ud)
+            {
+                std::destroy_at(static_cast<stream::LuaStream*>(ud));
+            }
+        );
+
+        lua_setuserdatametatable(L, kStreamTag); // pops the metatable
+    }
+    else
+    {
+        lua_pop(L, 1); // pop the existing metatable
+    }
+}
+
 void pushStream(lua_State* L, uv_stream_t* handle, bool readable, bool writable)
 {
+    ensureStreamMetatable(L);
     stream::LuaStream* s = static_cast<stream::LuaStream*>(
         lua_newuserdatataggedwithmetatable(L, sizeof(stream::LuaStream), kStreamTag));
     new (s) stream::LuaStream{};
     s->handle = handle;
+    s->readable = readable;
+    s->writable = writable;
+}
+
+void pushStreamFromFd(lua_State* L, int fd, bool readable, bool writable)
+{
+    ensureStreamMetatable(L);
+    stream::LuaStream* s = static_cast<stream::LuaStream*>(
+        lua_newuserdatataggedwithmetatable(L, sizeof(stream::LuaStream), kStreamTag));
+    new (s) stream::LuaStream{};
+    s->fd = fd;
     s->readable = readable;
     s->writable = writable;
 }
@@ -286,22 +490,7 @@ static uv_stream_t* getStdioStream(StdioHandles* stdio, int index)
 
 int luteopen_stream(lua_State* L)
 {
-    // Set up Stream metatable
-    luaL_newmetatable(L, "Stream");
-
-    lua_pushstring(L, "Stream");
-    lua_setfield(L, -2, "__type");
-
-    lua_setuserdatadtor(
-        L,
-        kStreamTag,
-        [](lua_State*, void* ud)
-        {
-            std::destroy_at(static_cast<stream::LuaStream*>(ud));
-        }
-    );
-
-    lua_setuserdatametatable(L, kStreamTag);
+    ensureStreamMetatable(L);
 
     // Build lib table
     lua_createtable(L, 0, std::size(stream::lib) + 3); // +3 for stdin/stdout/stderr

@@ -7,6 +7,7 @@ local luteLuau = require("@lute/luau")
 
 local fs = require("@lute/fs")
 local path = require("@std/path")
+local stream = require("@lute/stream")
 
 local luau = {}
 
@@ -23,13 +24,22 @@ end
 function luau.loadbypath(requirePath: path.pathlike, env: { [any]: any }?): any
 	local requirePathStr = if typeof(requirePath) == "string" then requirePath else path.format(requirePath)
 
-	local migrationHandle = fs.open(requirePathStr, "r")
+	local handle = fs.open(requirePathStr, "r")
 
-	local migrationBytecode = luau.compile(fs.read(migrationHandle))
+	local chunks = {}
+	while true do
+		local chunk = stream.read(handle)
+		if not chunk then
+			break
+		end
+		table.insert(chunks, buffer.tostring(chunk))
+	end
+	stream.close(handle)
 
-	fs.close(migrationHandle)
+	local source = table.concat(chunks)
+	local bytecode = luau.compile(source)
 
-	return luau.load(migrationBytecode, requirePathStr, env)()
+	return luau.load(bytecode, requirePathStr, env)()
 end
 
 export type TypePack = luteLuau.TypePack
