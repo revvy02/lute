@@ -369,7 +369,10 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
     {
         runtime->registerCancelCallback(L, [handle, runtime]() {
             if (!handle->completed)
+            {
+                handle->completed = true;
                 uv_process_kill(&handle->process, SIGTERM);
+            }
             if (handle->resumeToken && !handle->resumeToken->completed)
             {
                 handle->resumeToken->completed = true;

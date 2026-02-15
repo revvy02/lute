@@ -67,6 +67,20 @@ static void yieldLuaStateFor(lua_State* L, uint64_t milliseconds, bool putDeltaT
             if (yield->resumptionToken && yield->resumptionToken->yieldedThread)
                 yield->resumptionToken->runtime->unregisterCancelCallback(yield->resumptionToken->yieldedThread);
 
+            // Guard: cancel callback may have already completed this token
+            if (yield->resumptionToken->completed)
+            {
+                uv_close(
+                    reinterpret_cast<uv_handle_t*>(&yield->uvTimer),
+                    [](uv_handle_t* handle)
+                    {
+                        WaitData* yield = static_cast<WaitData*>(handle->data);
+                        delete yield;
+                    }
+                );
+                return;
+            }
+
             yield->resumptionToken->complete(
                 [yield](lua_State* L)
                 {
