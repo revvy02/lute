@@ -2,6 +2,7 @@
 
 #include "lute/common.h"
 #include "lute/runtime.h"
+#include "lute/stream.h"
 #include "lute/userdatas.h"
 #include "lute/uvutils.h"
 
@@ -29,6 +30,11 @@
 namespace process
 {
 
+const std::string kStdioKindDefault = "default";
+const std::string kStdioKindInherit = "inherit";
+const std::string kStdioKindNone = "none";
+const std::string kStdioKindPiped = "piped";
+
 void convertCRLFtoLF(std::string& str)
 {
     size_t writePos = 0;
@@ -44,6 +50,7 @@ void convertCRLFtoLF(std::string& str)
 struct ProcessHandle
 {
     uv_process_t process;
+    uv_pipe_t stdinPipe;
     uv_pipe_t stdoutPipe;
     uv_pipe_t stderrPipe;
     uv_loop_t* loop = nullptr;
@@ -52,6 +59,9 @@ struct ProcessHandle
     int64_t exitCode = -1;
     int termSignal = 0;
     bool completed = false;
+    std::string stdinKind;
+    std::string stdoutKind;
+    std::string stderrKind;
     ResumeToken resumeToken;
     std::shared_ptr<ProcessHandle> self;
     std::atomic<int> pendingCloses{0};
@@ -67,17 +77,26 @@ struct ProcessHandle
             }
         };
 
-        if (!uv_is_closing((uv_handle_t*)&stdoutPipe))
+        // For "default" mode fds, we own the pipe — close it here.
+        // For "piped" mode, streams own the pipe lifecycle — don't close.
+        // For "inherit"/"none", no pipe handle exists.
+        if (stdoutKind == kStdioKindDefault)
         {
-            pendingCloses++;
-            uv_read_stop((uv_stream_t*)&stdoutPipe);
-            uv_close((uv_handle_t*)&stdoutPipe, closeCb);
+            if (!uv_is_closing((uv_handle_t*)&stdoutPipe))
+            {
+                pendingCloses++;
+                uv_read_stop((uv_stream_t*)&stdoutPipe);
+                uv_close((uv_handle_t*)&stdoutPipe, closeCb);
+            }
         }
-        if (!uv_is_closing((uv_handle_t*)&stderrPipe))
+        if (stderrKind == kStdioKindDefault)
         {
-            pendingCloses++;
-            uv_read_stop((uv_stream_t*)&stderrPipe);
-            uv_close((uv_handle_t*)&stderrPipe, closeCb);
+            if (!uv_is_closing((uv_handle_t*)&stderrPipe))
+            {
+                pendingCloses++;
+                uv_read_stop((uv_stream_t*)&stderrPipe);
+                uv_close((uv_handle_t*)&stderrPipe, closeCb);
+            }
         }
         if (!uv_is_closing((uv_handle_t*)&process))
         {
@@ -108,8 +127,9 @@ struct ProcessHandle
         {
             int64_t finalExitCode = exitCode;
             int finalTermSignal = termSignal;
-            std::string finalStdout = stdoutData;
-            std::string finalStderr = stderrData;
+            // Only include buffered data from "default" mode fds; other modes produce empty strings
+            std::string finalStdout = (stdoutKind == kStdioKindDefault) ? stdoutData : "";
+            std::string finalStderr = (stderrKind == kStdioKindDefault) ? stderrData : "";
             std::string finalSignalStr = finalTermSignal ? std::to_string(finalTermSignal) : "";
             convertCRLFtoLF(finalStdout);
             convertCRLFtoLF(finalStderr);
@@ -158,7 +178,9 @@ struct ProcessHandle
 struct ProcessOptions
 {
     std::string cwd;
-    std::string stdioKind;
+    std::string stdinKind;  // "none" (default) | "piped" | "inherit"
+    std::string stdoutKind; // "default" (default) | "piped" | "inherit" | "none"
+    std::string stderrKind; // "default" (default) | "piped" | "inherit" | "none"
     std::map<std::string, std::string> env;
     std::string customShell; // only used by system()
 };
@@ -170,6 +192,9 @@ struct LuaProcessHandle
     ProcessOptions opts;
     bool detached = false;
     bool spawned = false;
+    int stdinRef = LUA_NOREF;
+    int stdoutRef = LUA_NOREF;
+    int stderrRef = LUA_NOREF;
 };
 
 static void onProcessExit(uv_process_t* process, int64_t exitStatus, int termSignal)
@@ -235,17 +260,20 @@ static void allocBuffer(uv_handle_t* handle, size_t suggestedSize, uv_buf_t* buf
     }
 }
 
-const std::string kStdioKindDefault = "default";
-const std::string kStdioKindInherit = "inherit";
-const std::string kStdioKindNone = "none";
-// TODO: add forwarding
-// const std::string kStdioKindForward = "forward";
-
 // helper function for run() and system()
 int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions opts, LuaProcessHandle* luaHandle = nullptr)
 {
-    auto handle = std::make_shared<ProcessHandle>();
-    handle->loop = getRuntimeLoop(L);
+    // Reuse pre-created handle from process.create (pipe mode), or create a new one
+    std::shared_ptr<ProcessHandle> handle;
+    if (luaHandle && luaHandle->handle)
+    {
+        handle = luaHandle->handle;
+    }
+    else
+    {
+        handle = std::make_shared<ProcessHandle>();
+        handle->loop = getRuntimeLoop(L);
+    }
     handle->self = handle;
 
     uv_process_options_t options = {};
@@ -302,38 +330,99 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
         options.cwd = opts.cwd.c_str();
     }
 
-    uv_pipe_init(handle->loop, &handle->stdoutPipe, 0);
-    uv_pipe_init(handle->loop, &handle->stderrPipe, 0);
+    // Apply defaults for empty kinds
+    const std::string& stdinKind = opts.stdinKind.empty() ? kStdioKindNone : opts.stdinKind;
+    const std::string& stdoutKind = opts.stdoutKind.empty() ? kStdioKindDefault : opts.stdoutKind;
+    const std::string& stderrKind = opts.stderrKind.empty() ? kStdioKindDefault : opts.stderrKind;
+
+    // Store resolved kinds on the handle for closeHandles/triggerCompletion
+    handle->stdinKind = stdinKind;
+    handle->stdoutKind = stdoutKind;
+    handle->stderrKind = stderrKind;
 
     options.stdio_count = 3;
     uv_stdio_container_t stdio[3];
-    stdio[0].flags = UV_IGNORE;
-    if (opts.stdioKind == kStdioKindNone)
+
+    // --- stdin ---
+    if (stdinKind == kStdioKindNone || stdinKind == kStdioKindDefault)
+    {
+        stdio[0].flags = UV_IGNORE;
+    }
+    else if (stdinKind == kStdioKindInherit)
+    {
+        stdio[0].flags = UV_INHERIT_FD;
+        stdio[0].data.fd = fileno(stdin);
+    }
+    else if (stdinKind == kStdioKindPiped)
+    {
+        // Pipe already initialized by process.create
+        stdio[0].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_READABLE_PIPE);
+        stdio[0].data.stream = (uv_stream_t*)&handle->stdinPipe;
+    }
+    else
+    {
+        luaL_error(L, "invalid stdio kind for stdin: '%s'", stdinKind.c_str());
+    }
+
+    // --- stdout ---
+    if (stdoutKind == kStdioKindNone)
     {
         stdio[1].flags = UV_IGNORE;
-        stdio[2].flags = UV_IGNORE;
     }
-    else if (opts.stdioKind == kStdioKindInherit)
+    else if (stdoutKind == kStdioKindInherit)
     {
         stdio[1].flags = UV_INHERIT_FD;
         stdio[1].data.fd = fileno(stdout);
+    }
+    else if (stdoutKind == kStdioKindPiped)
+    {
+        // Pipe already initialized by process.create
+        stdio[1].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
+        stdio[1].data.stream = (uv_stream_t*)&handle->stdoutPipe;
+    }
+    else if (stdoutKind == kStdioKindDefault)
+    {
+        if (!luaHandle || !luaHandle->handle) // only init if not pre-created
+            uv_pipe_init(handle->loop, &handle->stdoutPipe, 0);
+        stdio[1].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
+        stdio[1].data.stream = (uv_stream_t*)&handle->stdoutPipe;
+    }
+    else
+    {
+        luaL_error(L, "invalid stdio kind for stdout: '%s'", stdoutKind.c_str());
+    }
+
+    // --- stderr ---
+    if (stderrKind == kStdioKindNone)
+    {
+        stdio[2].flags = UV_IGNORE;
+    }
+    else if (stderrKind == kStdioKindInherit)
+    {
         stdio[2].flags = UV_INHERIT_FD;
         stdio[2].data.fd = fileno(stderr);
     }
-    else if (opts.stdioKind == kStdioKindDefault || opts.stdioKind.empty())
+    else if (stderrKind == kStdioKindPiped)
     {
-        stdio[1].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
-        stdio[1].data.stream = (uv_stream_t*)&handle->stdoutPipe;
+        // Pipe already initialized by process.create
+        stdio[2].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
+        stdio[2].data.stream = (uv_stream_t*)&handle->stderrPipe;
+    }
+    else if (stderrKind == kStdioKindDefault)
+    {
+        if (!luaHandle || !luaHandle->handle) // only init if not pre-created
+            uv_pipe_init(handle->loop, &handle->stderrPipe, 0);
         stdio[2].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
         stdio[2].data.stream = (uv_stream_t*)&handle->stderrPipe;
     }
     else
     {
-        luaL_error(L, "Invalid stdio kind: %s", opts.stdioKind.c_str());
+        luaL_error(L, "invalid stdio kind for stderr: '%s'", stderrKind.c_str());
     }
     options.stdio = stdio;
 
     handle->process.data = handle.get();
+    handle->stdinPipe.data = handle.get();
     handle->stdoutPipe.data = handle.get();
     handle->stderrPipe.data = handle.get();
 
@@ -353,8 +442,11 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
         luaL_error(L, "Failed to spawn process: %s", uv_strerror(spawnResult));
     }
 
-    uv_read_start((uv_stream_t*)&handle->stdoutPipe, allocBuffer, onPipeRead);
-    uv_read_start((uv_stream_t*)&handle->stderrPipe, allocBuffer, onPipeRead);
+    // Only auto-read for "default" mode fds (C-level string buffering)
+    if (stdoutKind == kStdioKindDefault)
+        uv_read_start((uv_stream_t*)&handle->stdoutPipe, allocBuffer, onPipeRead);
+    if (stderrKind == kStdioKindDefault)
+        uv_read_start((uv_stream_t*)&handle->stderrPipe, allocBuffer, onPipeRead);
 
     // Register child process for exit-level cleanup
     Runtime* runtime = getRuntime(L);
@@ -412,11 +504,31 @@ ProcessOptions parseOptions(lua_State* L, int index)
     }
     lua_pop(L, 1);
 
+    // stdio shorthand sets all three fds
     lua_getfield(L, index, "stdio");
     if (!lua_isnil(L, -1))
     {
-        opts.stdioKind = luaL_checkstring(L, -1);
+        std::string kind = luaL_checkstring(L, -1);
+        opts.stdinKind = kind;
+        opts.stdoutKind = kind;
+        opts.stderrKind = kind;
     }
+    lua_pop(L, 1);
+
+    // Per-fd overrides (take priority over shorthand)
+    lua_getfield(L, index, "stdin");
+    if (!lua_isnil(L, -1))
+        opts.stdinKind = luaL_checkstring(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, index, "stdout");
+    if (!lua_isnil(L, -1))
+        opts.stdoutKind = luaL_checkstring(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, index, "stderr");
+    if (!lua_isnil(L, -1))
+        opts.stderrKind = luaL_checkstring(L, -1);
     lua_pop(L, 1);
 
     lua_getfield(L, index, "env");
@@ -553,6 +665,30 @@ int create(lua_State* L)
     new (ph) LuaProcessHandle{};
     ph->args = std::move(args);
     ph->opts = std::move(opts);
+
+    // Resolve defaults so we can check for piped fds
+    const std::string& stdinKind = ph->opts.stdinKind.empty() ? kStdioKindNone : ph->opts.stdinKind;
+    const std::string& stdoutKind = ph->opts.stdoutKind.empty() ? kStdioKindDefault : ph->opts.stdoutKind;
+    const std::string& stderrKind = ph->opts.stderrKind.empty() ? kStdioKindDefault : ph->opts.stderrKind;
+
+    bool anyPiped = (stdinKind == kStdioKindPiped || stdoutKind == kStdioKindPiped || stderrKind == kStdioKindPiped);
+
+    // Pre-create ProcessHandle and init pipes so Stream userdatas can be
+    // created before process.run (e.g. inside task.spawn callbacks)
+    if (anyPiped)
+    {
+        auto handle = std::make_shared<ProcessHandle>();
+        handle->loop = getRuntimeLoop(L);
+        // Init all pipes that will be used (piped or default modes need UV_CREATE_PIPE)
+        if (stdinKind == kStdioKindPiped)
+            uv_pipe_init(handle->loop, &handle->stdinPipe, 0);
+        if (stdoutKind == kStdioKindPiped || stdoutKind == kStdioKindDefault)
+            uv_pipe_init(handle->loop, &handle->stdoutPipe, 0);
+        if (stderrKind == kStdioKindPiped || stderrKind == kStdioKindDefault)
+            uv_pipe_init(handle->loop, &handle->stderrPipe, 0);
+        ph->handle = handle;
+    }
+
     return 1;
 }
 
@@ -776,6 +912,86 @@ static int envIter(lua_State* L)
 
 } // namespace process
 
+static int processHandleIndex(lua_State* L)
+{
+    process::LuaProcessHandle* ph =
+        static_cast<process::LuaProcessHandle*>(lua_touserdatatagged(L, 1, kProcessHandleTag));
+    if (!ph)
+        return 0;
+
+    const char* key = luaL_checkstring(L, 2);
+
+    // Stream fields are only available when the fd is "piped" and handle is pre-created
+    if (!ph->handle)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    if (strcmp(key, "stdin") == 0)
+    {
+        if (ph->opts.stdinKind != "piped")
+        {
+            lua_pushnil(L);
+            return 1;
+        }
+        if (ph->stdinRef == LUA_NOREF)
+        {
+            pushStream(L, (uv_stream_t*)&ph->handle->stdinPipe, false, true);
+            lua_pushvalue(L, -1);
+            ph->stdinRef = lua_ref(L, -1);
+            lua_pop(L, 1);
+        }
+        else
+        {
+            lua_getref(L, ph->stdinRef);
+        }
+        return 1;
+    }
+    else if (strcmp(key, "stdout") == 0)
+    {
+        if (ph->opts.stdoutKind != "piped")
+        {
+            lua_pushnil(L);
+            return 1;
+        }
+        if (ph->stdoutRef == LUA_NOREF)
+        {
+            pushStream(L, (uv_stream_t*)&ph->handle->stdoutPipe, true, false);
+            lua_pushvalue(L, -1);
+            ph->stdoutRef = lua_ref(L, -1);
+            lua_pop(L, 1);
+        }
+        else
+        {
+            lua_getref(L, ph->stdoutRef);
+        }
+        return 1;
+    }
+    else if (strcmp(key, "stderr") == 0)
+    {
+        if (ph->opts.stderrKind != "piped")
+        {
+            lua_pushnil(L);
+            return 1;
+        }
+        if (ph->stderrRef == LUA_NOREF)
+        {
+            pushStream(L, (uv_stream_t*)&ph->handle->stderrPipe, true, false);
+            lua_pushvalue(L, -1);
+            ph->stderrRef = lua_ref(L, -1);
+            lua_pop(L, 1);
+        }
+        else
+        {
+            lua_getref(L, ph->stderrRef);
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
 static const luaL_Reg processEnvMeta[] =
     {{"__index", process::envIndex}, {"__newindex", process::envNewindex}, {"__iter", process::envIter}, {nullptr, nullptr}};
 
@@ -791,6 +1007,9 @@ int luteopen_process(lua_State* L)
     luaL_newmetatable(L, "ProcessHandle");
     lua_pushstring(L, "ProcessHandle");
     lua_setfield(L, -2, "__type");
+
+    lua_pushcfunction(L, processHandleIndex, "ProcessHandle.__index");
+    lua_setfield(L, -2, "__index");
 
     lua_setuserdatadtor(
         L,

@@ -145,6 +145,7 @@ add_subdirectory(lute/process)
 add_subdirectory(lute/system)
 add_subdirectory(lute/time)
 add_subdirectory(lute/io)
+add_subdirectory(lute/stream)
 
 # executables
 add_subdirectory(lute/cli)

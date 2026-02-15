@@ -1,9 +1,12 @@
 -- lute-lint-global-ignore(unused_variable)
-export type StdioKind = "default" | "inherit" | "none"
+export type StdioKind = "default" | "piped" | "inherit" | "none"
 
 export type ProcessRunOptions = {
 	cwd: string?,
 	stdio: StdioKind?,
+	stdin: StdioKind?,
+	stdout: StdioKind?,
+	stderr: StdioKind?,
 
 	env: { [string]: string }?,
 }
@@ -12,6 +15,9 @@ export type ProcessSystemOptions = {
 	system: string?,
 	cwd: string?,
 	stdio: StdioKind?,
+	stdin: StdioKind?,
+	stdout: StdioKind?,
+	stderr: StdioKind?,
 
 	env: { [string]: string }?,
 }
