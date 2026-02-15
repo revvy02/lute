@@ -37,7 +37,7 @@ test.suite("ProcessLifecycle", function(suite)
 		assert.eq(check.ok, false)
 	end)
 
-	suite:case("kill_noop_on_completed_process", function(assert)
+	suite:case("kill_noop_on_completed_process", function()
 		local p = process.create({ "echo", "done" })
 		process.run(p)
 		process.kill(p)

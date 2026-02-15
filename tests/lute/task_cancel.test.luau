@@ -15,7 +15,7 @@ test.suite("TaskCancel", function(suite)
 		assert.eq(reached, false)
 	end)
 
-	suite:case("cancel_noop_on_dead_thread", function(assert)
+	suite:case("cancel_noop_on_dead_thread", function(_assert)
 		local co = coroutine.create(function() end)
 		coroutine.resume(co)
 		task.cancel(co)

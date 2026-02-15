@@ -23,4 +23,8 @@ function task.delay<T..., U...>(dur: number | time.Duration, routine: (T...) -> 
 	error("unimplemented")
 end
 
+function task.cancel(thread: thread)
+	error("unimplemented")
+end
+
 return task
