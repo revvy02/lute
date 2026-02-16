@@ -9,6 +9,7 @@
 #include "uv.h"
 
 #include <cstring>
+#include <optional>
 #include <string>
 
 #include "fs_impl.h"
