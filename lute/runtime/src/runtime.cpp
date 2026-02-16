@@ -43,8 +43,19 @@ Runtime::~Runtime()
 
     if (runLoopThread.joinable())
         runLoopThread.join();
-    // At this point, Runtime::hasWork will have returned false (i.e uv_loop_alive is false)
-    // This means there are no outstanding handles, or file descriptors or work, to do, and we can exit
+
+    // Force-close any remaining handles (e.g. unref'd stdio streams from @lute/stream)
+    uv_walk(
+        &eventLoop,
+        [](uv_handle_t* handle, void*)
+        {
+            if (!uv_is_closing(handle))
+                uv_close(handle, nullptr);
+        },
+        nullptr
+    );
+    uv_run(&eventLoop, UV_RUN_DEFAULT);
+
     uv_loop_close(&eventLoop);
 }
 
