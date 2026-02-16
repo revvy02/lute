@@ -1,15 +1,8 @@
 #pragma once
 
 #include <cstddef>
-#include <optional>
 
 struct lua_State;
-
-// Legacy file handle type (lightuserdata) for backward compatibility
-struct UVFile
-{
-    std::optional<int> fd;
-};
 
 namespace fs
 {
@@ -34,13 +27,7 @@ constexpr const char* UV_DIRENT_TYPES[] = {
     UV_TYPENAME_BLOCK,
 };
 
-// fs.open now returns a Stream (via pushStreamFromFd)
 int open_impl(lua_State* L, const char* path, int flags, int mode);
-
-// Legacy file handle read/write/close (for lightuserdata handles from old binaries)
-int read_impl(lua_State* L, UVFile* handle);
-int write_impl(lua_State* L, UVFile* handle, const char* toWrite, size_t numBytes);
-int close_impl(lua_State* L, UVFile* handle);
 
 int remove_impl(lua_State* L, const char* path);
 
