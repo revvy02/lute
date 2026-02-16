@@ -39,8 +39,8 @@ test.suite("Lute CLI Compile", function(suite)
 
 		local result = process.run({ path.format(lutePath), path.format(compilerPath), path.format(compileePath) })
 		-- Compilation should work with no memory leaks
-		check.eq(result.stderr, "")
-		check.eq(result.stdout, "SUCCESS\n")
+		check.eq(result.err, "")
+		check.eq(result.out, "SUCCESS\n")
 		check.eq(result.exitcode, 0)
 
 		-- -- Cleanup

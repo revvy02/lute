@@ -22,16 +22,7 @@ export type ProcessSystemOptions = {
 	env: { [string]: string }?,
 }
 
-export type ProcessResult = {
-	stdout: string,
-	stderr: string,
-
-	ok: boolean,
-	exitcode: number,
-	signal: string?,
-}
-
-export type ProcessHandle = typeof(newproxy())
+export type Process = typeof(newproxy())
 
 local process = {}
 
@@ -45,11 +36,11 @@ function process.cwd(): string
 	error("not implemented")
 end
 
-function process.run(args: { string } | ProcessHandle, options: ProcessRunOptions?): ProcessResult
+function process.run(args: { string } | Process, options: ProcessRunOptions?): Process
 	error("not implemented")
 end
 
-function process.system(command: string, options: ProcessSystemOptions?): ProcessResult
+function process.system(command: string, options: ProcessSystemOptions?): Process
 	error("not implemented")
 end
 
@@ -61,19 +52,19 @@ function process.execpath(): string
 	error("not implemented")
 end
 
-function process.create(args: { string }, options: ProcessRunOptions?): ProcessHandle
+function process.create(args: { string }, options: ProcessRunOptions?): Process
 	error("not implemented")
 end
 
-function process.kill(handle: ProcessHandle)
+function process.kill(handle: Process)
 	error("not implemented")
 end
 
-function process.attach(handle: ProcessHandle)
+function process.attach(handle: Process)
 	error("not implemented")
 end
 
-function process.detach(handle: ProcessHandle)
+function process.detach(handle: Process)
 	error("not implemented")
 end
 

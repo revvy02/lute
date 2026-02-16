@@ -18,12 +18,12 @@ test.suite("ProcessSuite", function(suite)
 
 	suite:case("run_echo_array_via_run", function(assert)
 		local r = process.run({ "echo", "hello-from-lute" })
-		assert.eq(r.stdout, "hello-from-lute\n")
+		assert.eq(r.out, "hello-from-lute\n")
 	end)
 
 	suite:case("run_echo_array_via_system", function(assert)
 		local r = process.system("echo hello-from-lute")
-		assert.eq(r.stdout, "hello-from-lute\n")
+		assert.eq(r.out, "hello-from-lute\n")
 	end)
 
 	suite:case("run_system_and_cwd", function(check)
@@ -36,38 +36,30 @@ test.suite("ProcessSuite", function(suite)
 		local r = process.run({ "pwd" }, { cwd = rootdir })
 		if system.win32 then
 			assert(root ~= nil and (root :: windowsPath.path).drive ~= nil)
-			check.tableeq(r, { -- LUAUFIX: ProcessResult </: { [unknown] : unknown } seems wrong
-				exitcode = 0,
-				stdout = `/{root.drive:lower()}\n`,
-				stderr = "",
-				ok = true,
-			})
+			check.eq(r.ok, true)
+			check.eq(r.exitcode, 0)
+			check.eq(r.out, `/{root.drive:lower()}\n`)
+			check.eq(r.err, "")
 		else
-			check.tableeq(r, { -- LUAUFIX: ProcessResult </: { [unknown] : unknown } seems wrong
-				exitcode = 0,
-				stdout = "/\n",
-				stderr = "",
-				ok = true,
-			})
+			check.eq(r.ok, true)
+			check.eq(r.exitcode, 0)
+			check.eq(r.out, "/\n")
+			check.eq(r.err, "")
 		end
 
 		local r2 = process.system("echo hello!")
-		check.tableeq(r2, { -- LUAUFIX: ProcessResult </: { [unknown] : unknown } seems wrong
-			exitcode = 0,
-			stdout = "hello!\n",
-			stderr = "",
-			ok = true,
-		})
+		check.eq(r2.ok, true)
+		check.eq(r2.exitcode, 0)
+		check.eq(r2.out, "hello!\n")
+		check.eq(r2.err, "")
 	end)
 
 	suite:case("run_nonzero_exitcode", function(assert)
 		local r = process.run({ "sh", "-c", "exit 41" })
-		assert.tableeq(r, { -- LUAUFIX: ProcessResult </: { [unknown] : unknown } seems wrong
-			exitcode = 41,
-			stdout = "",
-			stderr = "",
-			ok = false,
-		})
+		assert.eq(r.ok, false)
+		assert.eq(r.exitcode, 41)
+		assert.eq(r.out, "")
+		assert.eq(r.err, "")
 	end)
 
 	suite:case("process_run_options_error_cases", function(assert)
@@ -103,7 +95,7 @@ test.suite("ProcessSuite", function(suite)
 	suite:case("process_run_arraylike_table", function(assert)
 		-- We expect this to still work and ignore the non-string keys
 		local r = process.run({ "echo", "hello", foo = "bar" })
-		assert.eq(r.stdout, "hello\n")
+		assert.eq(r.out, "hello\n")
 	end)
 
 	suite:case("process_system_options_error_cases", function(assert)

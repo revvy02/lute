@@ -22,7 +22,7 @@ local function assertErrorsWithMsg(
 
 	-- Check that the output specifies the inequal values
 	assert.eq(result.exitcode, 1)
-	assert.strcontains(result.stdout, expectedErrMsg)
+	assert.strcontains(result.out, expectedErrMsg)
 end
 
 test.suite("LuteStdTestFramework", function(suite)
@@ -49,15 +49,15 @@ test.run()
 		local result = process.run({ lutePath, path.format(testFilePath) })
 		-- Check that the output doesn't include xpcall
 		assert.eq(result.exitcode, 1)
-		assert.eq(result.stdout:find("xpcall", 1, true), nil)
+		assert.eq(result.out:find("xpcall", 1, true), nil)
 		-- Check that the error points to filepath + correct line number
-		assert.strcontains(result.stdout, `Runtime error`)
+		assert.strcontains(result.out, `Runtime error`)
 		assert.strcontains(
-			result.stdout,
+			result.out,
 			`{if system.win32 then path.format(testFilePath):gsub("\\", "/") else path.format(testFilePath)}:6`
 		)
-		assert.strcontains(result.stdout, `nil_field_access_test.test.luau:6: attempt to index nil with 'field'`)
-		assert.strcontains(result.stdout, `nil_field_access_test.test.luau:10`)
+		assert.strcontains(result.out, `nil_field_access_test.test.luau:6: attempt to index nil with 'field'`)
+		assert.strcontains(result.out, `nil_field_access_test.test.luau:10`)
 
 		fs.remove(testFilePath)
 	end)
@@ -84,15 +84,15 @@ test.run()
 
 		-- Check that the output doesn't include xpcall
 		assert.eq(result.exitcode, 1)
-		assert.eq(result.stdout:find("xpcall", 1, true), nil)
+		assert.eq(result.out:find("xpcall", 1, true), nil)
 		-- Check that the error points to filepath + correct line number
-		assert.strcontains(result.stdout, `Runtime error`)
+		assert.strcontains(result.out, `Runtime error`)
 		assert.strcontains(
-			result.stdout,
+			result.out,
 			`{if system.win32 then path.format(testFilePath):gsub("\\", "/") else path.format(testFilePath)}:5`
 		)
-		assert.strcontains(result.stdout, `nil_field_access_test.test.luau:5: attempt to index nil with 'field'`)
-		assert.strcontains(result.stdout, `nil_field_access_test.test.luau:8`)
+		assert.strcontains(result.out, `nil_field_access_test.test.luau:5: attempt to index nil with 'field'`)
+		assert.strcontains(result.out, `nil_field_access_test.test.luau:8`)
 
 		fs.remove(testFilePath)
 	end)

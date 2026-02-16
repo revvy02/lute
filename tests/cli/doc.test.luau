@@ -16,31 +16,31 @@ test.suite("lute-doc", function(suite)
 		local result = process.run({ lutePath, "doc", "-h" })
 
 		assert.eq(result.exitcode, 0)
-		assert.strcontains(result.stdout, USAGE)
+		assert.strcontains(result.out, USAGE)
 
 		result = process.run({ lutePath, "doc", "--h" })
 
 		assert.eq(result.exitcode, 0)
-		assert.strcontains(result.stdout, USAGE)
+		assert.strcontains(result.out, USAGE)
 
 		result = process.run({ lutePath, "doc", "--help" })
 
 		assert.eq(result.exitcode, 0)
-		assert.strcontains(result.stdout, USAGE)
+		assert.strcontains(result.out, USAGE)
 	end)
 
 	suite:case("lute-doc-no-modules-provided", function(assert)
 		local result = process.system(`{lutePath} doc`)
 
 		assert.eq(result.exitcode, 1)
-		assert.strcontains(result.stderr, "Error: No module paths specified.")
+		assert.strcontains(result.err, "Error: No module paths specified.")
 	end)
 
 	suite:case("lute-doc-default-directory", function(assert)
 		local result = process.system(`{lutePath} doc definitions lute/std/libs`)
 
 		assert.eq(result.exitcode, 0)
-		assert.strcontains(result.stdout, "Documentation generation complete!")
+		assert.strcontains(result.out, "Documentation generation complete!")
 	end)
 
 	suite:case("lute-doc-specified-directory", function(assert)
@@ -53,8 +53,8 @@ test.suite("lute-doc", function(suite)
 		local result = process.system(`{lutePath} doc -o {path.format(tmpOutputDir)} definitions lute/std/libs`)
 
 		assert.eq(result.exitcode, 0)
-		assert.strcontains(result.stdout, "Documentation generation complete!")
-		assert.strcontains(result.stdout, tostring(tmpOutputDir)) -- "Files written to: <output dir>"
+		assert.strcontains(result.out, "Documentation generation complete!")
+		assert.strcontains(result.out, tostring(tmpOutputDir)) -- "Files written to: <output dir>"
 
 		assert.eq(fs.exists(path.join(tmpOutputDir, "reference", "lute", "fs.md")), true)
 		assert.eq(fs.exists(path.join(tmpOutputDir, "reference", "std", "fs.md")), true)

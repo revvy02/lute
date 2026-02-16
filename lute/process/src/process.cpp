@@ -63,6 +63,7 @@ struct ProcessHandle
     std::string stdinKind;
     std::string stdoutKind;
     std::string stderrKind;
+    int luaHandleRef = LUA_NOREF; // Lua ref to LuaProcessHandle userdata, for returning from triggerCompletion
     ResumeToken resumeToken;
     std::shared_ptr<ProcessHandle> self;
     std::atomic<int> pendingCloses{0};
@@ -126,43 +127,20 @@ struct ProcessHandle
 
         if (success)
         {
-            int64_t finalExitCode = exitCode;
-            int finalTermSignal = termSignal;
-            // Only include buffered data from "default" mode fds; other modes produce empty strings
-            std::string finalStdout = (stdoutKind == kStdioKindDefault) ? stdoutData : "";
-            std::string finalStderr = (stderrKind == kStdioKindDefault) ? stderrData : "";
-            std::string finalSignalStr = finalTermSignal ? std::to_string(finalTermSignal) : "";
-            convertCRLFtoLF(finalStdout);
-            convertCRLFtoLF(finalStderr);
+            // Apply CRLF conversion in place on accumulated buffers
+            if (stdoutKind == kStdioKindDefault)
+                convertCRLFtoLF(stdoutData);
+            if (stderrKind == kStdioKindDefault)
+                convertCRLFtoLF(stderrData);
+
+            // Return the LuaProcessHandle userdata (fields accessed via __index).
+            // We only read the ref here (lua_getref) — LuaProcessHandle owns it
+            // and will lua_unref in its destructor.
+            int ref = luaHandleRef;
             resumeToken->complete(
-                [=](lua_State* L)
+                [ref](lua_State* L)
                 {
-                    lua_createtable(L, 0, 5); // ok, exitCode, stdout, stderr, signal
-
-                    bool ok = (finalExitCode == 0 && finalTermSignal == 0);
-
-                    lua_pushboolean(L, ok);
-                    lua_setfield(L, -2, "ok");
-
-                    lua_pushinteger(L, finalExitCode);
-                    lua_setfield(L, -2, "exitcode");
-
-                    lua_pushlstring(L, finalStdout.c_str(), finalStdout.length());
-                    lua_setfield(L, -2, "stdout");
-
-                    lua_pushlstring(L, finalStderr.c_str(), finalStderr.length());
-                    lua_setfield(L, -2, "stderr");
-
-                    if (!finalSignalStr.empty())
-                    {
-                        lua_pushlstring(L, finalSignalStr.c_str(), finalSignalStr.size());
-                    }
-                    else
-                    {
-                        lua_pushnil(L);
-                    }
-                    lua_setfield(L, -2, "signal");
-
+                    lua_getref(L, ref);
                     return 1;
                 }
             );
@@ -196,6 +174,7 @@ struct LuaProcessHandle
     int stdinRef = LUA_NOREF;
     int stdoutRef = LUA_NOREF;
     int stderrRef = LUA_NOREF;
+    int selfRef = LUA_NOREF; // Lua ref to this userdata, for returning from triggerCompletion
 };
 
 static void onProcessExit(uv_process_t* process, int64_t exitStatus, int termSignal)
@@ -455,7 +434,12 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
 
     // Store internal handle if we have a LuaProcessHandle
     if (luaHandle)
+    {
         luaHandle->handle = handle;
+        // Copy selfRef to ProcessHandle for triggerCompletion to read.
+        // LuaProcessHandle retains ownership and unrefs in its destructor.
+        handle->luaHandleRef = luaHandle->selfRef;
+    }
 
     // Register cancel callback for thread-level cleanup
     if (!luaHandle || !luaHandle->detached)
@@ -565,6 +549,10 @@ int run(lua_State* L)
         if (ph->spawned)
             luaL_error(L, "process already running");
         ph->spawned = true;
+        // Store a ref to the userdata for returning from triggerCompletion
+        lua_pushvalue(L, 1);
+        ph->selfRef = lua_ref(L, -1);
+        lua_pop(L, 1);
         return executionHelper(L, ph->args, ph->opts, ph);
     }
 
@@ -592,7 +580,18 @@ int run(lua_State* L)
     }
 
     ProcessOptions opts = parseOptions(L, 2);
-    return executionHelper(L, args, opts);
+
+    // Create a LuaProcessHandle userdata so run() returns a unified Process type
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(
+        lua_newuserdatataggedwithmetatable(L, sizeof(LuaProcessHandle), kProcessHandleTag));
+    new (ph) LuaProcessHandle{};
+    ph->args = std::move(args);
+    ph->opts = std::move(opts);
+    // Store a ref to the userdata for returning from triggerCompletion
+    lua_pushvalue(L, -1);
+    ph->selfRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    return executionHelper(L, ph->args, ph->opts, ph);
 }
 
 int system(lua_State* L)
@@ -628,7 +627,19 @@ int system(lua_State* L)
         resolvedShell = opts.customShell;
     }
 
-    return executionHelper(L, {resolvedShell, shellArg, command}, opts);
+    std::vector<std::string> args = {resolvedShell, shellArg, command};
+
+    // Create a LuaProcessHandle userdata so system() returns a unified Process type
+    LuaProcessHandle* ph = static_cast<LuaProcessHandle*>(
+        lua_newuserdatataggedwithmetatable(L, sizeof(LuaProcessHandle), kProcessHandleTag));
+    new (ph) LuaProcessHandle{};
+    ph->args = args;
+    ph->opts = std::move(opts);
+    // Store a ref to the userdata for returning from triggerCompletion
+    lua_pushvalue(L, -1);
+    ph->selfRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    return executionHelper(L, ph->args, ph->opts, ph);
 }
 
 int homedir(lua_State* L)
@@ -922,16 +933,10 @@ static int processHandleIndex(lua_State* L)
 
     const char* key = luaL_checkstring(L, 2);
 
-    // Stream fields are only available when the fd is "piped" and handle is pre-created
-    if (!ph->handle)
-    {
-        lua_pushnil(L);
-        return 1;
-    }
-
+    // Stream fields require a pre-created handle (piped mode)
     if (strcmp(key, "stdin") == 0)
     {
-        if (ph->opts.stdinKind != "piped")
+        if (!ph->handle || ph->opts.stdinKind != "piped")
         {
             lua_pushnil(L);
             return 1;
@@ -951,7 +956,7 @@ static int processHandleIndex(lua_State* L)
     }
     else if (strcmp(key, "stdout") == 0)
     {
-        if (ph->opts.stdoutKind != "piped")
+        if (!ph->handle || ph->opts.stdoutKind != "piped")
         {
             lua_pushnil(L);
             return 1;
@@ -971,7 +976,7 @@ static int processHandleIndex(lua_State* L)
     }
     else if (strcmp(key, "stderr") == 0)
     {
-        if (ph->opts.stderrKind != "piped")
+        if (!ph->handle || ph->opts.stderrKind != "piped")
         {
             lua_pushnil(L);
             return 1;
@@ -987,6 +992,51 @@ static int processHandleIndex(lua_State* L)
         {
             lua_getref(L, ph->stderrRef);
         }
+        return 1;
+    }
+    // Accumulated output strings (only meaningful for "default" mode after completion)
+    else if (strcmp(key, "out") == 0)
+    {
+        if (ph->handle && ph->handle->completed && ph->handle->stdoutKind == process::kStdioKindDefault)
+            lua_pushlstring(L, ph->handle->stdoutData.c_str(), ph->handle->stdoutData.length());
+        else
+            lua_pushlstring(L, "", 0);
+        return 1;
+    }
+    else if (strcmp(key, "err") == 0)
+    {
+        if (ph->handle && ph->handle->completed && ph->handle->stderrKind == process::kStdioKindDefault)
+            lua_pushlstring(L, ph->handle->stderrData.c_str(), ph->handle->stderrData.length());
+        else
+            lua_pushlstring(L, "", 0);
+        return 1;
+    }
+    // Result fields (nil before completion)
+    else if (strcmp(key, "ok") == 0)
+    {
+        if (ph->handle && ph->handle->completed)
+            lua_pushboolean(L, ph->handle->exitCode == 0 && ph->handle->termSignal == 0);
+        else
+            lua_pushnil(L);
+        return 1;
+    }
+    else if (strcmp(key, "exitcode") == 0)
+    {
+        if (ph->handle && ph->handle->completed)
+            lua_pushinteger(L, ph->handle->exitCode);
+        else
+            lua_pushnil(L);
+        return 1;
+    }
+    else if (strcmp(key, "signal") == 0)
+    {
+        if (ph->handle && ph->handle->completed && ph->handle->termSignal != 0)
+        {
+            std::string sigStr = std::to_string(ph->handle->termSignal);
+            lua_pushlstring(L, sigStr.c_str(), sigStr.size());
+        }
+        else
+            lua_pushnil(L);
         return 1;
     }
 
@@ -1017,7 +1067,10 @@ int luteopen_process(lua_State* L)
         kProcessHandleTag,
         [](lua_State* L, void* ud)
         {
-            std::destroy_at(static_cast<process::LuaProcessHandle*>(ud));
+            auto* ph = static_cast<process::LuaProcessHandle*>(ud);
+            if (ph->selfRef != LUA_NOREF)
+                lua_unref(L, ph->selfRef);
+            std::destroy_at(ph);
         }
     );
 
