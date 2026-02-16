@@ -467,7 +467,7 @@ struct StdioHandles
 
 static StdioHandles* initStdioHandles(uv_loop_t* loop)
 {
-    auto* stdio = new StdioHandles();
+    static StdioHandles stdio;
 
     int fds[3] = {fileno(stdin), fileno(stdout), fileno(stderr)};
 
@@ -477,22 +477,22 @@ static StdioHandles* initStdioHandles(uv_loop_t* loop)
 
         if (ht == UV_TTY)
         {
-            stdio->isTty[i] = true;
-            uv_tty_init(loop, &stdio->handles[i].tty, fds[i], (i == 0) ? 1 : 0);
+            stdio.isTty[i] = true;
+            uv_tty_init(loop, &stdio.handles[i].tty, fds[i], (i == 0) ? 1 : 0);
         }
         else
         {
-            stdio->isTty[i] = false;
-            uv_pipe_init(loop, &stdio->handles[i].pipe, 0);
-            uv_pipe_open(&stdio->handles[i].pipe, fds[i]);
+            stdio.isTty[i] = false;
+            uv_pipe_init(loop, &stdio.handles[i].pipe, 0);
+            uv_pipe_open(&stdio.handles[i].pipe, fds[i]);
         }
 
         // Unref so parent stdio handles don't keep the event loop alive.
         // Without this, piped stdio (e.g. on CI) prevents clean shutdown.
-        uv_unref((uv_handle_t*)&stdio->handles[i]);
+        uv_unref((uv_handle_t*)&stdio.handles[i]);
     }
 
-    return stdio;
+    return &stdio;
 }
 
 static uv_stream_t* getStdioStream(StdioHandles* stdio, int index)
