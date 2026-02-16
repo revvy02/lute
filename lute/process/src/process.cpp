@@ -335,7 +335,7 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
     uv_stdio_container_t stdio[3];
 
     // --- stdin ---
-    if (stdinKind == kStdioKindNone || stdinKind == kStdioKindDefault)
+    if (stdinKind == kStdioKindNone || stdinKind == kStdioKindDefault || stdinKind == kStdioKindTee)
     {
         stdio[0].flags = UV_IGNORE;
     }

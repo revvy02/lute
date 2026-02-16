@@ -117,6 +117,12 @@ test.suite("ProcessSuite", function(suite)
 		assert.eq(r.ok, true)
 	end)
 
+	suite:case("run_stdio_tee_shorthand", function(assert)
+		local r = process.run({ "echo", "tee-shorthand" }, { stdio = "tee" })
+		assert.eq(r.out, "tee-shorthand\n")
+		assert.eq(r.ok, true)
+	end)
+
 	suite:case("process_system_options_error_cases", function(assert)
 		assert.erroreq(function()
 			process.system()
