@@ -35,6 +35,7 @@ const std::string kStdioKindDefault = "default";
 const std::string kStdioKindInherit = "inherit";
 const std::string kStdioKindNone = "none";
 const std::string kStdioKindPiped = "piped";
+const std::string kStdioKindTee = "tee";
 
 void convertCRLFtoLF(std::string& str)
 {
@@ -82,7 +83,7 @@ struct ProcessHandle
         // For "default" mode fds, we own the pipe — close it here.
         // For "piped" mode, streams own the pipe lifecycle — don't close.
         // For "inherit"/"none", no pipe handle exists.
-        if (stdoutKind == kStdioKindDefault)
+        if (stdoutKind == kStdioKindDefault || stdoutKind == kStdioKindTee)
         {
             if (!uv_is_closing((uv_handle_t*)&stdoutPipe))
             {
@@ -91,7 +92,7 @@ struct ProcessHandle
                 uv_close((uv_handle_t*)&stdoutPipe, closeCb);
             }
         }
-        if (stderrKind == kStdioKindDefault)
+        if (stderrKind == kStdioKindDefault || stderrKind == kStdioKindTee)
         {
             if (!uv_is_closing((uv_handle_t*)&stderrPipe))
             {
@@ -128,9 +129,9 @@ struct ProcessHandle
         if (success)
         {
             // Apply CRLF conversion in place on accumulated buffers
-            if (stdoutKind == kStdioKindDefault)
+            if (stdoutKind == kStdioKindDefault || stdoutKind == kStdioKindTee)
                 convertCRLFtoLF(stdoutData);
-            if (stderrKind == kStdioKindDefault)
+            if (stderrKind == kStdioKindDefault || stderrKind == kStdioKindTee)
                 convertCRLFtoLF(stderrData);
 
             // Return the LuaProcessHandle userdata (fields accessed via __index).
@@ -212,6 +213,16 @@ static void onPipeRead(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     {
         std::string* targetBuffer = (stream == (uv_stream_t*)&handle->stdoutPipe) ? &handle->stdoutData : &handle->stderrData;
         targetBuffer->append(buf->base, nread);
+
+        // Tee mode: also forward to parent's stdout/stderr
+        bool isTeeStdout = (stream == (uv_stream_t*)&handle->stdoutPipe && handle->stdoutKind == kStdioKindTee);
+        bool isTeeStderr = (stream == (uv_stream_t*)&handle->stderrPipe && handle->stderrKind == kStdioKindTee);
+        if (isTeeStdout || isTeeStderr)
+        {
+            FILE* parentFd = isTeeStdout ? stdout : stderr;
+            fwrite(buf->base, 1, nread, parentFd);
+            fflush(parentFd);
+        }
     }
     else if (nread < 0)
     {
@@ -360,7 +371,7 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
         stdio[1].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
         stdio[1].data.stream = (uv_stream_t*)&handle->stdoutPipe;
     }
-    else if (stdoutKind == kStdioKindDefault)
+    else if (stdoutKind == kStdioKindDefault || stdoutKind == kStdioKindTee)
     {
         if (!luaHandle || !luaHandle->handle) // only init if not pre-created
             uv_pipe_init(handle->loop, &handle->stdoutPipe, 0);
@@ -388,7 +399,7 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
         stdio[2].flags = static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
         stdio[2].data.stream = (uv_stream_t*)&handle->stderrPipe;
     }
-    else if (stderrKind == kStdioKindDefault)
+    else if (stderrKind == kStdioKindDefault || stderrKind == kStdioKindTee)
     {
         if (!luaHandle || !luaHandle->handle) // only init if not pre-created
             uv_pipe_init(handle->loop, &handle->stderrPipe, 0);
@@ -422,10 +433,10 @@ int executionHelper(lua_State* L, std::vector<std::string> args, ProcessOptions 
         luaL_error(L, "Failed to spawn process: %s", uv_strerror(spawnResult));
     }
 
-    // Only auto-read for "default" mode fds (C-level string buffering)
-    if (stdoutKind == kStdioKindDefault)
+    // Auto-read for "default" and "tee" mode fds (C-level string buffering)
+    if (stdoutKind == kStdioKindDefault || stdoutKind == kStdioKindTee)
         uv_read_start((uv_stream_t*)&handle->stdoutPipe, allocBuffer, onPipeRead);
-    if (stderrKind == kStdioKindDefault)
+    if (stderrKind == kStdioKindDefault || stderrKind == kStdioKindTee)
         uv_read_start((uv_stream_t*)&handle->stderrPipe, allocBuffer, onPipeRead);
 
     // Register child process for exit-level cleanup
@@ -694,9 +705,9 @@ int create(lua_State* L)
         // Init all pipes that will be used (piped or default modes need UV_CREATE_PIPE)
         if (stdinKind == kStdioKindPiped)
             uv_pipe_init(handle->loop, &handle->stdinPipe, 0);
-        if (stdoutKind == kStdioKindPiped || stdoutKind == kStdioKindDefault)
+        if (stdoutKind == kStdioKindPiped || stdoutKind == kStdioKindDefault || stdoutKind == kStdioKindTee)
             uv_pipe_init(handle->loop, &handle->stdoutPipe, 0);
-        if (stderrKind == kStdioKindPiped || stderrKind == kStdioKindDefault)
+        if (stderrKind == kStdioKindPiped || stderrKind == kStdioKindDefault || stderrKind == kStdioKindTee)
             uv_pipe_init(handle->loop, &handle->stderrPipe, 0);
         ph->handle = handle;
     }
@@ -994,10 +1005,11 @@ static int processHandleIndex(lua_State* L)
         }
         return 1;
     }
-    // Accumulated output strings (only meaningful for "default" mode after completion)
+    // Accumulated output strings (meaningful for "default" and "tee" modes after completion)
     else if (strcmp(key, "out") == 0)
     {
-        if (ph->handle && ph->handle->completed && ph->handle->stdoutKind == process::kStdioKindDefault)
+        if (ph->handle && ph->handle->completed &&
+            (ph->handle->stdoutKind == process::kStdioKindDefault || ph->handle->stdoutKind == process::kStdioKindTee))
             lua_pushlstring(L, ph->handle->stdoutData.c_str(), ph->handle->stdoutData.length());
         else
             lua_pushlstring(L, "", 0);
@@ -1005,7 +1017,8 @@ static int processHandleIndex(lua_State* L)
     }
     else if (strcmp(key, "err") == 0)
     {
-        if (ph->handle && ph->handle->completed && ph->handle->stderrKind == process::kStdioKindDefault)
+        if (ph->handle && ph->handle->completed &&
+            (ph->handle->stderrKind == process::kStdioKindDefault || ph->handle->stderrKind == process::kStdioKindTee))
             lua_pushlstring(L, ph->handle->stderrData.c_str(), ph->handle->stderrData.length());
         else
             lua_pushlstring(L, "", 0);
