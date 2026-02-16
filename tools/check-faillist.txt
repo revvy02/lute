@@ -48,6 +48,9 @@ examples/parallel_sort.luau:90:24-25
 examples/parallel_sort.luau:91:9-13
 examples/parallel_sort_helper.luau:4:11-15
 examples/process.luau:4:38-39
+examples/process.luau:11:24-34
+examples/process.luau:12:24-34
+examples/process.luau:13:24-34
 examples/process.luau:17:7-12
 examples/process.luau:18:7-12
 examples/process.luau:19:7-12
@@ -217,10 +220,16 @@ tests/batteries/collections/deque.test.luau:61:13-16
 tests/batteries/collections/deque.test.luau:81:13-16
 tests/batteries/collections/deque.test.luau:86:13-16
 tests/batteries/collections/deque.test.luau:91:13-16
+tests/lute/stream.test.luau:11:3-12
 tests/lute/stream.test.luau:22:4-15
 tests/lute/stream.test.luau:24:13-24
+tests/lute/stream.test.luau:30:3-12
+tests/lute/stream.test.luau:47:3-12
 tests/lute/stream.test.luau:59:4-15
 tests/lute/stream.test.luau:61:13-24
+tests/lute/stream.test.luau:67:3-12
+tests/lute/stream.test.luau:77:3-12
+tests/lute/stream.test.luau:89:3-12
 tests/runtime/crypto.test.luau:66:26-30
 tests/runtime/crypto.test.luau:108:56-68
 tests/runtime/crypto.test.luau:112:72-84
@@ -372,6 +381,7 @@ tests/std/tableext.test.luau:63:18-18
 tools/luthier.luau:159:2-26
 tools/luthier.luau:198:3-12
 tools/luthier.luau:199:11-25
+tools/luthier.luau:660:9-80
 tools/luthier.luau:696:3-79
 tools/luthier.luau:696:28-78
 tools/luthier.luau:700:3-75

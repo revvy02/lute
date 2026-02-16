@@ -1,4 +1,6 @@
 -- lute-lint-global-ignore(unused_variable)
+local stream = require("@lute/stream")
+
 export type StdioKind = "default" | "piped" | "inherit" | "none" | "tee"
 
 export type ProcessRunOptions = {
@@ -22,7 +24,16 @@ export type ProcessSystemOptions = {
 	env: { [string]: string }?,
 }
 
-export type Process = typeof(newproxy())
+export type Process = {
+	ok: boolean?,
+	exitcode: number?,
+	signal: string?,
+	out: string,
+	err: string,
+	stdin: stream.Stream?,
+	stdout: stream.Stream?,
+	stderr: stream.Stream?,
+}
 
 local process = {}
 
