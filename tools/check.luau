@@ -67,7 +67,7 @@ local function runTypecheck(lutePath: string, files: { string }): string
 		table.insert(args, file)
 	end
 	local result = process.run(args)
-	return result.stdout .. result.stderr
+	return result.out .. result.err
 end
 
 type ErrorEntry = {

@@ -6,7 +6,7 @@ process.system("echo hello", { cwd = {} })
 local result = process.run({ "echo", "Hello, lute!" })
 
 print(result.exitcode)
-print(result.stdout)
+print(result.out)
 
 local t1 = task.create(process.run, { "echo", "-n", "One" })
 local t2 = task.create(process.run, { "echo", "-n", "Two" })
@@ -14,23 +14,23 @@ local t3 = task.create(process.run, { "echo", "-n", "Three" })
 
 local r1, r2, r3 = task.awaitall(t1, t2, t3)
 
-print(r1.stdout)
-print(r2.stdout)
-print(r3.stdout)
+print(r1.out)
+print(r2.out)
+print(r3.out)
 
 local r4 = process.system("echo Hello, lute!")
-print(r4.stdout)
+print(r4.out)
 
 local r5 = process.system("echo $HOME", { env = { HOME = "/home/lute" } })
-print(r5.stdout)
+print(r5.out)
 
 local r6 = process.run({ "pwd" }, { cwd = "/" })
-print(r6.stdout)
+print(r6.out)
 
 local r7 = process.system("echo $0")
-print(r7.stdout)
+print(r7.out)
 
 local r8 = process.system("echo $0", { system = "/bin/sh" })
-print(r8.stdout)
+print(r8.out)
 
 process.exit(0)

@@ -22,7 +22,7 @@ local BUILD_DIR = "build"
 local cwd = process.cwd()
 
 local function gitVersion(): { major: number, minor: number, path: number }
-	local gitVersionString = process.run({ "git", "--version" }).stdout
+	local gitVersionString = process.run({ "git", "--version" }).out
 	local gitVersion = string.split(gitVersionString, " ")[3]
 	local components = string.split(gitVersion, ".")
 	return {
