@@ -15,6 +15,16 @@ namespace fs
    Returns a Stream backed by the opened file descriptor */
 int open(lua_State* L);
 
+/* Reads from a file handle (Stream or legacy lightuserdata).
+   Returns buffer for Stream handles, string for legacy handles. */
+int read(lua_State* L);
+
+/* Writes to a file handle (Stream or legacy lightuserdata). */
+int write(lua_State* L);
+
+/* Closes a file handle (Stream or legacy lightuserdata). */
+int close(lua_State* L);
+
 /* Removes a file */
 int remove(lua_State* L);
 
@@ -50,6 +60,9 @@ int listdir(lua_State* L);
 
 static const luaL_Reg lib[] = {
     {"open", open},
+    {"read", read},
+    {"write", write},
+    {"close", close},
 
     {"remove", remove},
 

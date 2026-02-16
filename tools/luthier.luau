@@ -2,7 +2,6 @@
 
 local crypto = require("@lute/crypto")
 local fs = require("@lute/fs")
-local stream = require("@lute/stream")
 local process = require("@lute/process")
 local system = require("@lute/system")
 local cli = require("@batteries/cli")
@@ -34,15 +33,15 @@ end
 
 local function readFileToString(path: string): string
 	local file = fs.open(path, "r")
-	local buf = stream.read(file)
-	stream.close(file)
-	return if buf then buffer.tostring(buf) else ""
+	local raw = fs.read(file)
+	fs.close(file)
+	return if type(raw) == "buffer" then buffer.tostring(raw) else raw
 end
 
 local function writeStringToFile(path: string, contents: string): ()
 	local file = fs.open(path, "w+")
-	stream.write(file, contents)
-	stream.close(file)
+	fs.write(file, contents)
+	fs.close(file)
 end
 
 local gitVersionInfo = gitVersion()
@@ -264,7 +263,7 @@ local function isGeneratedStdLibUpToDate(): boolean
 end
 
 local function writeLines(file, lines: { string })
-	stream.write(file, table.concat(lines, "\n") .. "\n")
+	fs.write(file, table.concat(lines, "\n") .. "\n")
 end
 
 local luteBatteriesDir = projectRelative("lute", "batteries", "generated")
@@ -336,21 +335,21 @@ local function generateBatteriesCommandsIfNeeded()
 					escapedLine = string.gsub(escapedLine, "\r", "")
 					table.insert(generatedLines, `"{escapedLine}\\n"`)
 				end
-				stream.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
 			else
-				stream.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_BATTERIES({libSrc})LUTE_BATTERIES"},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_BATTERIES({libSrc})LUTE_BATTERIES"},\n`)
 			end
 		end
 
 		if safeFsType(path) == "dir" then
-			stream.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
+			fs.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
 		end
 
 		numItems += 1
 	end)
 
-	stream.write(cpp, "};\n")
-	stream.close(cpp)
+	fs.write(cpp, "};\n")
+	fs.close(cpp)
 
 	local header = fs.open(joinPath(luteBatteriesDir, "batteries.h"), "w+")
 	writeLines(header, {
@@ -362,11 +361,11 @@ local function generateBatteriesCommandsIfNeeded()
 		"",
 		`extern const std::pair<std::string_view, std::string_view> lutebatteries[{numItems}];`,
 	})
-	stream.close(header)
+	fs.close(header)
 
 	local hash = fs.open(batteriesHashFile, "w+")
-	stream.write(hash, getBatteriesHash())
-	stream.close(hash)
+	fs.write(hash, getBatteriesHash())
+	fs.close(hash)
 end
 
 local function generateStdLibFilesIfNeeded()
@@ -415,21 +414,21 @@ local function generateStdLibFilesIfNeeded()
 					escapedLine = string.gsub(escapedLine, "\r", "")
 					table.insert(generatedLines, `"{escapedLine}\\n"`)
 				end
-				stream.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
 			else
-				stream.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_STDLIB({libSrc})LUTE_STDLIB"},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_STDLIB({libSrc})LUTE_STDLIB"},\n`)
 			end
 		end
 
 		if safeFsType(path) == "dir" then
-			stream.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
+			fs.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
 		end
 
 		numItems += 1
 	end)
 
-	stream.write(cpp, "};\n")
-	stream.close(cpp)
+	fs.write(cpp, "};\n")
+	fs.close(cpp)
 
 	local header = fs.open(joinPath(generatedPath, "modules.h"), "w+")
 	writeLines(header, {
@@ -441,12 +440,12 @@ local function generateStdLibFilesIfNeeded()
 		"",
 		`extern const std::pair<std::string_view, std::string_view> lutestdlib[{numItems}];`,
 	})
-	stream.close(header)
+	fs.close(header)
 
 	local hash = fs.open(joinPath(generatedPath, "hash.txt"), "w+")
-	stream.write(hash, getStdLibHash())
+	fs.write(hash, getStdLibHash())
 
-	stream.close(hash)
+	fs.close(hash)
 end
 
 local function getTypeDefinitionsHash(): string
@@ -518,8 +517,8 @@ local function generateTypeDefinitionFiles()
 	end
 
 	local hash = fs.open(joinPath(generatedPath, "hash.txt"), "w+")
-	stream.write(hash, getTypeDefinitionsHash())
-	stream.close(hash)
+	fs.write(hash, getTypeDefinitionsHash())
+	fs.close(hash)
 
 	writeStringToFile(
 		projectRelative("lute", "cli", "commands", "setup", "generated", "definitions.luau"),
@@ -600,21 +599,21 @@ local function generateCliCommandsFilesIfNeeded()
 					escapedLine = string.gsub(escapedLine, "\r", "")
 					table.insert(generatedLines, `"{escapedLine}\\n"`)
 				end
-				stream.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", {table.concat(generatedLines, "\n")}},\n`)
 			else
-				stream.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_CMD({libSrc})LUTE_CMD"},\n`)
+				fs.write(cpp, `\n    \{"{aliasedPath}", R"LUTE_CMD({libSrc})LUTE_CMD"},\n`)
 			end
 		end
 
 		if safeFsType(path) == "dir" then
-			stream.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
+			fs.write(cpp, `\n    \{"{aliasedPath}", "#directory"},\n`)
 		end
 
 		numItems += 1
 	end)
 
-	stream.write(cpp, "};\n")
-	stream.close(cpp)
+	fs.write(cpp, "};\n")
+	fs.close(cpp)
 
 	local header = fs.open(joinPath(generatedPath, "commands.h"), "w+")
 	writeLines(header, {
@@ -626,11 +625,11 @@ local function generateCliCommandsFilesIfNeeded()
 		"",
 		`extern const std::pair<std::string_view, std::string_view> luteclicommands[{numItems}];`,
 	})
-	stream.close(header)
+	fs.close(header)
 
 	local hash = fs.open(joinPath(generatedPath, "hash.txt"), "w+")
-	stream.write(hash, getCliCommandsHash())
-	stream.close(hash)
+	fs.write(hash, getCliCommandsHash())
+	fs.close(hash)
 end
 
 local function generateFilesIfNeeded()
@@ -809,8 +808,8 @@ local function fetchDependencies(): number
 	pcall(fs.mkdir, generatedPath)
 
 	local hash = fs.open(joinPath(generatedPath, "hash.txt"), "w+")
-	stream.write(hash, getTuneFilesHash())
-	stream.close(hash)
+	fs.write(hash, getTuneFilesHash())
+	fs.close(hash)
 
 	return 0
 end

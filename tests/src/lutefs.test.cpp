@@ -20,21 +20,20 @@ TEST_CASE_FIXTURE(CliRuntimeFixture, "fs_open_write_read_close")
     runCode(
         R"(
         local fs = require("@lute/fs")
-        local stream = require("@lute/stream")
         local path = ")" +
         testFile + R"("
 
         local h = fs.open(path, "w+")
-        stream.write(h, "Hello, World!")
-        stream.close(h)
+        fs.write(h, "Hello, World!")
+        fs.close(h)
 
         local hr = fs.open(path, "r")
         assert(hr ~= nil, "File handle for reading should not be nil")
 
-        local buf = stream.read(hr)
+        local buf = fs.read(hr)
         local content = if buf then buffer.tostring(buf) else ""
         local correctness = content == "Hello, World!"
-        stream.close(hr)
+        fs.close(hr)
 
         report(content)
         report(correctness)

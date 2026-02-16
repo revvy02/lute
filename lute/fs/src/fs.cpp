@@ -1,6 +1,7 @@
 #include "lute/fs.h"
 
 #include "lute/runtime.h"
+#include "lute/stream.h"
 #include "lute/userdatas.h"
 
 #include "lua.h"
@@ -16,6 +17,54 @@
 
 namespace fs
 {
+
+static UVFile* getFileHandle(lua_State* L, int index)
+{
+    if (!lua_islightuserdata(L, index))
+    {
+        luaL_errorL(L, "Error: expected file handle");
+    }
+
+    auto* handle = static_cast<UVFile*>(lua_tolightuserdata(L, index));
+    if (!handle)
+    {
+        luaL_errorL(L, "Error: invalid file handle");
+    }
+
+    return handle;
+}
+
+int read(lua_State* L)
+{
+    if (lua_islightuserdata(L, 1))
+    {
+        auto* handle = getFileHandle(L, 1);
+        return read_impl(L, handle);
+    }
+    return stream::read(L);
+}
+
+int write(lua_State* L)
+{
+    if (lua_islightuserdata(L, 1))
+    {
+        auto* handle = getFileHandle(L, 1);
+        size_t len;
+        const char* data = luaL_checklstring(L, 2, &len);
+        return write_impl(L, handle, data, len);
+    }
+    return stream::write(L);
+}
+
+int close(lua_State* L)
+{
+    if (lua_islightuserdata(L, 1))
+    {
+        auto* handle = getFileHandle(L, 1);
+        return close_impl(L, handle);
+    }
+    return stream::close(L);
+}
 
 std::optional<int> setFlags(const char* c, int* openFlags)
 {
