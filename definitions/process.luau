@@ -47,9 +47,7 @@ function process.cwd(): string
 	error("not implemented")
 end
 
-function process.run(args: { string } | Process, options: ProcessRunOptions?): Process
-	error("not implemented")
-end
+process.run = (nil :: any) :: (({ string }, ProcessRunOptions?) -> Process) & ((Process) -> Process)
 
 function process.system(command: string, options: ProcessSystemOptions?): Process
 	error("not implemented")

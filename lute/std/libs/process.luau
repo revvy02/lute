@@ -23,9 +23,7 @@ function processlib.cwd(): path
 	return pathlib.parse(process.cwd())
 end
 
-function processlib.run(args: { string } | process.Process, options: processrunoptions?): process.Process
-	return process.run(args, options)
-end
+processlib.run = process.run :: (({ string }, processrunoptions?) -> process.Process) & ((process.Process) -> process.Process)
 
 function processlib.system(command: string, options: processsystemoptions?): process.Process
 	return process.system(command, options)
